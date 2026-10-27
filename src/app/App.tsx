@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { edgeFunctionBase, supabase } from "../lib/supabase";
+import { edgeFunctionBase, edgeFunctionHeaders, supabase } from "../lib/supabase";
 import {
   type DB,
   type User,
@@ -33,7 +33,7 @@ async function fetchDBRemote(): Promise<DB | null> {
   } = await supabase.auth.getSession();
   if (!session) return null;
   const res = await fetch(`${edgeFunctionBase}/db`, {
-    headers: { Authorization: `Bearer ${session.access_token}` },
+    headers: { ...edgeFunctionHeaders, Authorization: `Bearer ${session.access_token}` },
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || "Unable to load your workspace.");
@@ -44,7 +44,7 @@ async function fetchBillingRemote(): Promise<BillingInfo> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error("Please sign in again to view company billing.");
   const res = await fetch(`${edgeFunctionBase}/billing/status`, {
-    headers: { Authorization: `Bearer ${session.access_token}` },
+    headers: { ...edgeFunctionHeaders, Authorization: `Bearer ${session.access_token}` },
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -65,6 +65,7 @@ async function postBillingRemote(path: string, body?: unknown) {
   const res = await fetch(`${edgeFunctionBase}/billing/${path}`, {
     method: "POST",
     headers: {
+      ...edgeFunctionHeaders,
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
     },
@@ -84,6 +85,7 @@ async function saveDBRemote(db: DB): Promise<void> {
   const res = await fetch(`${edgeFunctionBase}/db`, {
     method: "POST",
     headers: {
+      ...edgeFunctionHeaders,
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
     },
@@ -104,6 +106,7 @@ async function createAccountRemote(
   const res = await fetch(`${edgeFunctionBase}/users`, {
     method: "POST",
     headers: {
+      ...edgeFunctionHeaders,
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.access_token}`,
     },
