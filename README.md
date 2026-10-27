@@ -308,7 +308,7 @@ If you prefer not to use the CLI:
    [`supabase/migrations/20261026000200_multi_company_tenancy.sql`](supabase/migrations/20261026000200_multi_company_tenancy.sql)
 
 ### Database Entities Created:
-- `companies`: Multi-tenant company registries with unique slugs.
+- `companies`: Multi-tenant company registries with unique UUID identifiers.
 - `profiles`: Core user profiles with roles (`owner`, `manager`, `worker`), approval status, section assignment, and pay type.
 - `profile_private`: Segregated sensitive personal information (Aadhaar, Bank Account, IFSC, UPI ID, Emergency Contact).
 - `orders`: Factory orders, client names, garment types, deadlines, quantities, piece rates, and six stage completion counts.
@@ -325,7 +325,6 @@ Because public signups are disabled, bootstrap your initial company and owner us
 SUPABASE_URL=https://your-project-id.supabase.co \
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key \
 COMPANY_NAME="Premier Textile Mills" \
-COMPANY_SLUG=premier-textile-mills \
 OWNER_EMAIL=owner@premiertextiles.com \
 OWNER_PASSWORD="SecureOwnerPassword123!" \
 OWNER_NAME="Factory Owner" \
@@ -503,8 +502,30 @@ supabase secrets set ALLOWED_ORIGIN=https://textilepay-system.vercel.app
 3. **Multi-Factor Authentication (MFA):** Recommended for Owner accounts via the Supabase Auth dashboard.
 4. **Financial Disclaimers:** TextilePay formats UPI payment intent strings for manual settlement. Always reconcile disbursements against your primary banking statement before closing payroll periods.
 
+## 22. Multi-Company Onboarding and Tenant Security
+
+There is no platform administrator role or public company-registration page. A trusted platform operator provisions each company with the `owner:create` script. Run it only from a secured operator machine with the Supabase service-role key in the process environment; never add that key to `VITE_*` variables, browser storage, or frontend code. The script creates an active company, its approved initial owner, company piece-rate defaults, and company settings. The database generates a UUID for each company. If Auth creation fails, the script attempts to roll back its new company and reports cleanup failures.
+
+The first setup requires the production, multi-company, tenant-hardening, `20261027000200_remove_company_slugs.sql`, and `20261027000300_dynamic_company_sections.sql` migrations. Review each migration, back up production data, and apply it through your normal Supabase change process; this repository does not run migrations automatically. The tenant-hardening migration makes Auth signup metadata create only pending workers and grants tenant context only to approved users in active companies. The slug migration removes the unused company slug column while preserving company records and related data. The dynamic sections migration creates a company-specific section catalog and JSON-backed order stages, migrating existing six-stage data forward.
+
+Owners can reconfigure their factory pipeline in **Workers & Rates → Sections**. They can rename and reorder sections, add more, or deactivate ones they no longer use. Deactivated sections remain in historical records. The Create Account and approval forms offer that company's active sections, and production, submissions, and piece rates follow the same company-specific setup.
+
+The shared login page asks for email and password only. After authentication, the Edge Function reads the user's trusted profile, loads that company's workspace, and returns its company name for the application header and dashboards. Users do not choose a company at login; company membership remains controlled by the database profile and RLS.
+
+Run the PostgreSQL isolation checks against a disposable local Supabase database with Docker available:
+
+```bash
+supabase start
+supabase db reset
+supabase test db
+```
+
+The SQL test creates two companies and four test accounts inside a transaction, tests tenant reads and writes under the `authenticated` role, then rolls its fixtures back. The existing Node tests do not connect to Supabase; the tenant API test checks the Edge Function with separate accounts for both companies. Do not use the service-role key to simulate normal-user authorization.
+
+For the live API isolation check, provide two approved owner test accounts through `TENANT_TEST_SUPABASE_URL`, `TENANT_TEST_SUPABASE_ANON_KEY`, `TENANT_TEST_OWNER_A_EMAIL`, `TENANT_TEST_OWNER_A_PASSWORD`, `TENANT_TEST_OWNER_B_EMAIL`, and `TENANT_TEST_OWNER_B_PASSWORD`, then run `npm run test:tenant-api`. It uses each account's ordinary Auth session and performs workspace reads only.
+
 ---
 
-## 22. License
+## 23. License
 
 All rights reserved. Proprietary software developed for TextilePay factory operations. Unauthorized copying, distribution, or deployment without explicit authorization from the repository owner is strictly prohibited.

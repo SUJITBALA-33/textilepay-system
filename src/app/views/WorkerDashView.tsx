@@ -9,8 +9,8 @@ import {
 import {
   type Section,
   type Submission,
-  SECTION_NAMES,
-  SECTION_COLORS,
+  sectionLabel,
+  sectionColor,
   calcRemainingCapacity,
   currentMonth,
   formatMoney,
@@ -48,6 +48,9 @@ export function WorkerDashView({ db, update, user, toast }: ViewProps) {
   } | null>(null);
   const [pieces, setPieces] = useState("");
   const [note, setNote] = useState("");
+  const workerSectionActive = db.sections.some(
+    (configuredSection) => configuredSection.code === section && configuredSection.active,
+  );
 
   function getRemaining(orderId: string): number {
     const o = db.orders.find((x) => x.id === orderId);
@@ -89,22 +92,22 @@ export function WorkerDashView({ db, update, user, toast }: ViewProps) {
     setNote("");
   }
 
-  const activeOrders = section
-    ? db.orders.filter((o) => o.status === "active" && o.stages[section] > 0)
+  const activeOrders = section && workerSectionActive
+    ? db.orders.filter((o) => o.status === "active" && (o.stages[section] ?? 0) > 0)
     : [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1
-            className="text-2xl text-foreground font-normal"
-            style={{ fontFamily: "'Instrument Serif', serif" }}
-          >
-            My Dashboard
+          <p className="max-w-full truncate text-xs font-semibold uppercase tracking-[0.16em] text-primary" title={db.company?.name}>{db.company?.name}</p>
+          <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Worker workspace</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            My work
           </h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {section && <SectionTag section={section} />}
+            <span className="text-sm text-muted-foreground">Welcome back, {user.name}.</span>
+            {section && <SectionTag section={section} label={sectionLabel(section, db.sections)} />}
             <span className="text-sm text-muted-foreground">
               {formatMonth(month)}
             </span>
@@ -112,13 +115,13 @@ export function WorkerDashView({ db, update, user, toast }: ViewProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 sm:gap-4">
         <StatCard
           label="Total Pieces"
           value={String(totalPieces)}
           sub="This month"
           icon={Package}
-          color="#d4921a"
+          color="#bf6a42"
         />
         <StatCard
           label="Earned Wages"
@@ -129,21 +132,21 @@ export function WorkerDashView({ db, update, user, toast }: ViewProps) {
               : `${totalPieces} pcs × ₹${db.pieceRates[section]}`
           }
           icon={IndianRupee}
-          color="#4ade80"
+          color="#2e8b57"
         />
         <StatCard
           label="OT Earnings"
           value={formatMoney(ot)}
           sub={`${att.otHours}h × ₹${user.hourlyOT} × ${db.settings.otMultiplier}x`}
           icon={Clock}
-          color="#60a5fa"
+          color="#5279a5"
         />
         <StatCard
           label="Gross Earnings"
           value={formatMoney(base + ot)}
           sub="Before pool & deductions"
           icon={Wallet}
-          color="#c084fc"
+          color="#8a6aa8"
         />
       </div>
 
@@ -163,11 +166,13 @@ export function WorkerDashView({ db, update, user, toast }: ViewProps) {
 
       <div>
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-          Active Orders — {section ? SECTION_NAMES[section] : ""}
+          Active Orders — {section ? sectionLabel(section, db.sections) : ""}
         </h2>
         {activeOrders.length === 0 ? (
           <div className="bg-card border border-border rounded-xl p-10 text-center text-muted-foreground text-sm">
-            No active orders for your section right now.
+            {workerSectionActive
+              ? "No active orders for your section right now."
+              : "Your section is inactive. Contact the owner to assign you to an active section."}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -178,7 +183,7 @@ export function WorkerDashView({ db, update, user, toast }: ViewProps) {
               const totalForSection = db.submissions
                 .filter((s) => s.orderId === o.id && s.section === section)
                 .reduce((s, x) => s + x.pieces, 0);
-              const cap = o.stages[section];
+              const cap = o.stages[section] ?? 0;
 
               return (
                 <div
@@ -189,7 +194,7 @@ export function WorkerDashView({ db, update, user, toast }: ViewProps) {
                     <div>
                       <h3 className="font-medium text-foreground">{o.name}</h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Capacity for {SECTION_NAMES[section]}: {cap} pcs
+                        Capacity for {sectionLabel(section, db.sections)}: {cap} pcs
                       </p>
                     </div>
                     <Badge variant={remaining > 0 ? "success" : "error"}>
@@ -207,7 +212,7 @@ export function WorkerDashView({ db, update, user, toast }: ViewProps) {
                       value={totalForSection}
                       max={cap}
                       color={
-                        section ? SECTION_COLORS[section].text : "#d4921a"
+                        section ? sectionColor(section).text : "#d4921a"
                       }
                     />
                   </div>

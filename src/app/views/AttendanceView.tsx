@@ -1,10 +1,11 @@
+import { CalendarDays, Clock3, Users } from "lucide-react";
 import {
   type AttendanceRecord,
   currentMonth,
   formatMoney,
   formatMonth,
 } from "../../lib/payroll";
-import { SectionTag } from "../components/ui-primitives";
+import { SectionTag, StatCard } from "../components/ui-primitives";
 import { type ViewProps } from "./DashboardView";
 
 export function AttendanceView({ db, update, user }: ViewProps) {
@@ -12,6 +13,15 @@ export function AttendanceView({ db, update, user }: ViewProps) {
   const isOwner = user.role === "owner";
   const workers = db.users.filter(
     (u) => u.role === "worker" && u.status === "approved"
+  );
+  const totals = workers.reduce(
+    (result, worker) => {
+      const attendance = db.attendance[worker.id]?.[month] ?? { present: 0, otHours: 0 };
+      result.days += attendance.present;
+      result.ot += attendance.otHours;
+      return result;
+    },
+    { days: 0, ot: 0 }
   );
 
   function getAtt(userId: string): AttendanceRecord {
@@ -33,20 +43,23 @@ export function AttendanceView({ db, update, user }: ViewProps) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <div>
-        <h1
-          className="text-2xl text-foreground font-normal"
-          style={{ fontFamily: "'Instrument Serif', serif" }}
-        >
-          Attendance &amp; OT Hours
-        </h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Attendance &amp; overtime
+          </h1>
         <p className="text-sm text-muted-foreground">
           {formatMonth(month)} &mdash;{" "}
           {isOwner
             ? "View only — OT rates managed in Workers → OT Rates"
             : "Enter present days and OT hours for each worker"}
         </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
+        <StatCard label="Approved workers" value={String(workers.length)} sub="Active workforce" icon={Users} color="#13776e" />
+        <StatCard label="Days recorded" value={String(totals.days)} sub={formatMonth(month)} icon={CalendarDays} color="#5279a5" />
+        <StatCard label="Overtime hours" value={String(totals.ot)} sub="Recorded this month" icon={Clock3} color="#bf6a42" />
       </div>
 
       <div className="bg-card border border-border rounded-xl overflow-x-auto">
@@ -98,7 +111,7 @@ export function AttendanceView({ db, update, user }: ViewProps) {
                   </td>
                   <td className="px-4 py-3">
                     {w.section ? (
-                      <SectionTag section={w.section} />
+                      <SectionTag section={w.section} label={db.sections.find((section) => section.code === w.section)?.name} />
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
@@ -113,6 +126,7 @@ export function AttendanceView({ db, update, user }: ViewProps) {
                       </span>
                     ) : (
                       <input
+                        aria-label={`Present days for ${w.name}`}
                         type="number"
                         min="0"
                         max="31"
@@ -126,6 +140,7 @@ export function AttendanceView({ db, update, user }: ViewProps) {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <input
+                      aria-label={`Overtime hours for ${w.name}`}
                       type="number"
                       min="0"
                       step="0.5"

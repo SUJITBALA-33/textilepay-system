@@ -1,9 +1,7 @@
 import { useState, useMemo } from "react";
 import { Printer } from "lucide-react";
 import {
-  SECTIONS,
-  SECTION_NAMES,
-  SECTION_COLORS,
+  sectionColor,
   calcSalaries,
   currentMonth,
   formatMoney,
@@ -14,6 +12,7 @@ import { Btn, Sel } from "../components/ui-primitives";
 import { type ViewProps } from "./DashboardView";
 
 export function ReportsView({ db, update }: ViewProps) {
+  const sections = db.sections.filter((section) => section.active).sort((a, b) => a.position - b.position);
   const [month, setMonth] = useState(currentMonth());
   const [tab, setTab] = useState<"salary" | "order" | "pfesi" | "attendance">(
     "salary"
@@ -24,9 +23,9 @@ export function ReportsView({ db, update }: ViewProps) {
   );
 
   const tabCls = (t: string) =>
-    `px-4 py-1.5 rounded-md text-sm transition-all cursor-pointer ${
+    `min-h-11 rounded-xl px-4 text-sm font-medium transition-all cursor-pointer ${
       tab === t
-        ? "bg-card text-foreground shadow-sm font-medium"
+        ? "bg-white text-foreground shadow-sm"
         : "text-muted-foreground hover:text-foreground"
     }`;
 
@@ -37,19 +36,14 @@ export function ReportsView({ db, update }: ViewProps) {
   const tdCls = "px-4 py-3";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1
-            className="text-2xl text-foreground font-normal"
-            style={{ fontFamily: "'Instrument Serif', serif" }}
-          >
-            Reports
-          </h1>
-          <p className="text-sm text-muted-foreground">Printable summaries</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Reports</h1>
+          <p className="text-sm text-muted-foreground">Payroll, order, statutory, and attendance summaries.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Sel value={month} onChange={(e) => setMonth(e.target.value)}>
+          <Sel label="Report month" value={month} onChange={(e) => setMonth(e.target.value)}>
             {getMonthOptions().map((m) => (
               <option key={m} value={m}>
                 {formatMonth(m)}
@@ -62,17 +56,19 @@ export function ReportsView({ db, update }: ViewProps) {
         </div>
       </div>
 
-      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit flex-wrap">
-        <button onClick={() => setTab("salary")} className={tabCls("salary")}>
+      <div role="group" aria-label="Report type" className="flex w-full flex-wrap gap-1 rounded-2xl border border-border bg-[#edf3f1] p-1 sm:w-fit">
+        <button type="button" aria-pressed={tab === "salary"} onClick={() => setTab("salary")} className={tabCls("salary")}>
           Salary
         </button>
-        <button onClick={() => setTab("order")} className={tabCls("order")}>
+        <button type="button" aria-pressed={tab === "order"} onClick={() => setTab("order")} className={tabCls("order")}>
           Orders
         </button>
-        <button onClick={() => setTab("pfesi")} className={tabCls("pfesi")}>
+        <button type="button" aria-pressed={tab === "pfesi"} onClick={() => setTab("pfesi")} className={tabCls("pfesi")}>
           PF &amp; ESI
         </button>
         <button
+          type="button"
+          aria-pressed={tab === "attendance"}
           onClick={() => setTab("attendance")}
           className={tabCls("attendance")}
         >
@@ -207,8 +203,9 @@ export function ReportsView({ db, update }: ViewProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {SECTIONS.map((s, i) => {
-                    const count = order.stages[s];
+                  {sections.map((section, i) => {
+                    const s = section.code;
+                    const count = order.stages[s] ?? 0;
                     const pct =
                       order.target > 0
                         ? Math.round((count / order.target) * 100)
@@ -230,13 +227,13 @@ export function ReportsView({ db, update }: ViewProps) {
                           <span
                             className="text-xs px-2 py-0.5 rounded mr-2"
                             style={{
-                              backgroundColor: SECTION_COLORS[s].bg,
-                              color: SECTION_COLORS[s].text,
+                              backgroundColor: sectionColor(s).bg,
+                              color: sectionColor(s).text,
                             }}
                           >
                             {s}
                           </span>
-                          {SECTION_NAMES[s]}
+                          {section.name}
                         </td>
                         <td className="px-4 py-3 text-right font-mono text-foreground">
                           {count}
@@ -440,8 +437,8 @@ export function ReportsView({ db, update }: ViewProps) {
                         <span
                           className="text-xs px-2 py-0.5 rounded"
                           style={{
-                            backgroundColor: SECTION_COLORS[w.section].bg,
-                            color: SECTION_COLORS[w.section].text,
+                            backgroundColor: sectionColor(w.section).bg,
+                            color: sectionColor(w.section).text,
                           }}
                         >
                           {w.section}

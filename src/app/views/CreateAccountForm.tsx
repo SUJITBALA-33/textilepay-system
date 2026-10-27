@@ -1,13 +1,14 @@
 import React, { useState } from "react";
 import { Plus } from "lucide-react";
 import { Inp, Sel, Btn, type ToastFn } from "../components/ui-primitives";
-import { type Role, SECTIONS, SECTION_NAMES } from "../../lib/payroll";
+import { type Role, type CompanySection } from "../../lib/payroll";
 
 interface CreateAccountFormProps {
   creatorRole: Role;
   onCreate: (form: Record<string, string>) => Promise<void>;
   onDone?: () => void;
   toast: ToastFn;
+  sections: CompanySection[];
 }
 
 export function CreateAccountForm({
@@ -15,6 +16,7 @@ export function CreateAccountForm({
   onCreate,
   onDone,
   toast,
+  sections,
 }: CreateAccountFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
@@ -31,7 +33,7 @@ export function CreateAccountForm({
     dob: "",
     joinDate: new Date().toISOString().slice(0, 10),
     role: "worker",
-    section: "S1",
+    section: sections[0]?.code ?? "",
     payType: "piece",
   });
   const upd = (key: string, value: string) =>
@@ -78,7 +80,7 @@ export function CreateAccountForm({
         dob: "",
         joinDate: new Date().toISOString().slice(0, 10),
         role: "worker",
-        section: "S1",
+        section: sections[0]?.code ?? "",
         payType: "piece",
       });
       onDone?.();
@@ -106,15 +108,18 @@ export function CreateAccountForm({
         value={form.email}
         onChange={(e) => upd("email", e.target.value)}
         placeholder="person@company.com"
-        autoComplete="off"
+        autoComplete="email"
         required
       />
       <div className="grid grid-cols-2 gap-3">
         <Inp
           label="Mobile *"
+          type="tel"
           value={form.mobile}
           onChange={(e) => upd("mobile", e.target.value)}
           placeholder="10-digit mobile"
+          autoComplete="tel"
+          inputMode="tel"
           required
         />
         <Inp
@@ -137,6 +142,7 @@ export function CreateAccountForm({
           onChange={(e) => upd("password", e.target.value)}
           placeholder="Minimum 8 characters"
           autoComplete="new-password"
+        minLength={8}
           required
         />
       </div>
@@ -197,9 +203,9 @@ export function CreateAccountForm({
             value={form.section}
             onChange={(e) => upd("section", e.target.value)}
           >
-            {SECTIONS.map((section) => (
-              <option key={section} value={section}>
-                {section} — {SECTION_NAMES[section]}
+            {sections.map((section) => (
+              <option key={section.code} value={section.code}>
+                {section.name}
               </option>
             ))}
           </Sel>

@@ -6,7 +6,6 @@ const required = [
   "OWNER_EMAIL",
   "OWNER_PASSWORD",
   "COMPANY_NAME",
-  "COMPANY_SLUG",
 ];
 const missing = required.filter((name) => !process.env[name]);
 
@@ -30,21 +29,46 @@ const email = process.env.OWNER_EMAIL.trim().toLowerCase();
 const name = process.env.OWNER_NAME?.trim() || "Owner";
 const username = process.env.OWNER_USERNAME?.trim().toLowerCase() || "owner";
 const companyName = process.env.COMPANY_NAME.trim();
-const companySlug = process.env.COMPANY_SLUG.trim().toLowerCase();
 
-if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(companySlug)) {
-  console.error("COMPANY_SLUG must contain lowercase letters, numbers, and single hyphens only.");
+if (!companyName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  console.error("Provide a non-empty COMPANY_NAME and a valid OWNER_EMAIL.");
   process.exit(1);
+}
+
+async function rollbackProvisioning(companyId, userId) {
+  if (userId) {
+    const { error } = await supabase.auth.admin.deleteUser(userId);
+    if (error) console.error(`Rollback could not delete the new owner account: ${error.message}`);
+  }
+  if (companyId) {
+    const { error } = await supabase.from("companies").delete().eq("id", companyId);
+    if (error) console.error(`Rollback could not delete the new company: ${error.message}`);
+  }
 }
 
 const { data: company, error: companyError } = await supabase
   .from("companies")
-  .insert({ name: companyName, slug: companySlug, status: "active" })
+  .insert({ name: companyName, status: "active" })
   .select("id")
   .single();
 
 if (companyError) {
   console.error(`Unable to create company: ${companyError.message}`);
+  process.exit(1);
+}
+
+const defaultSections = [
+  { code: "S1", name: "Cutting" },
+  { code: "S2", name: "Stitching" },
+  { code: "S3", name: "Embroidery" },
+  { code: "S4", name: "Checking" },
+  { code: "S5", name: "Finishing" },
+  { code: "S6", name: "Packing" },
+].map((section, index) => ({ ...section, company_id: company.id, position: index + 1, active: true }));
+const { error: sectionError } = await supabase.from("company_sections").insert(defaultSections);
+if (sectionError) {
+  await rollbackProvisioning(company.id);
+  console.error(`Unable to initialize company sections: ${sectionError.message}`);
   process.exit(1);
 }
 
@@ -58,11 +82,12 @@ const { data, error } = await supabase.auth.admin.createUser({
     mobile: "",
     role: "worker",
     company_id: company.id,
+    section: defaultSections[0].code,
   },
 });
 
 if (error) {
-  await supabase.from("companies").delete().eq("id", company.id);
+  await rollbackProvisioning(company.id);
   console.error(`Unable to create owner: ${error.message}`);
   process.exit(1);
 }
@@ -74,15 +99,13 @@ const { error: profileError } = await supabase
   .eq("company_id", company.id);
 
 if (profileError) {
-  await supabase.auth.admin.deleteUser(data.user.id);
-  await supabase.from("companies").delete().eq("id", company.id);
+  await rollbackProvisioning(company.id, data.user.id);
   console.error(`Unable to approve owner profile: ${profileError.message}`);
   process.exit(1);
 }
 
-const sections = ["S1", "S2", "S3", "S4", "S5", "S6"];
 const { error: defaultsError } = await supabase.from("piece_rates").insert(
-  sections.map((section) => ({ company_id: company.id, section, rate: 0 })),
+  defaultSections.map(({ code }) => ({ company_id: company.id, section: code, rate: 0 })),
 );
 const { error: settingsError } = await supabase.from("app_settings").insert({
   company_id: company.id,
@@ -90,8 +113,7 @@ const { error: settingsError } = await supabase.from("app_settings").insert({
 });
 
 if (defaultsError || settingsError) {
-  await supabase.auth.admin.deleteUser(data.user.id);
-  await supabase.from("companies").delete().eq("id", company.id);
+  await rollbackProvisioning(company.id, data.user.id);
   console.error(`Unable to create company defaults: ${(defaultsError || settingsError).message}`);
   process.exit(1);
 }

@@ -89,20 +89,17 @@ export function PayoutView({ db, update, toast }: ViewProps) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1
-            className="text-2xl text-foreground font-normal"
-            style={{ fontFamily: "'Instrument Serif', serif" }}
-          >
-            Payout
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Payroll &amp; payouts
           </h1>
           <p className="text-sm text-muted-foreground">
-            Monthly salary disbursement
+            Review monthly earnings, deductions, and recorded payments.
           </p>
         </div>
-        <Sel value={month} onChange={(e) => setMonth(e.target.value)}>
+        <Sel label="Payroll month" value={month} onChange={(e) => setMonth(e.target.value)}>
           {getMonthOptions().map((m) => (
             <option key={m} value={m}>
               {formatMonth(m)}
@@ -111,7 +108,7 @@ export function PayoutView({ db, update, toast }: ViewProps) {
         </Sel>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
         <StatCard
           label="Total Revenue"
           value={formatMoney(totalRev)}
@@ -160,7 +157,7 @@ export function PayoutView({ db, update, toast }: ViewProps) {
                       <span className="font-medium text-foreground">
                         {w.name}
                       </span>
-                      {w.section && <SectionTag section={w.section} />}
+                      {w.section && <SectionTag section={w.section} label={db.sections.find((section) => section.code === w.section)?.name} />}
                       <Badge
                         variant={w.payType === "piece" ? "info" : "default"}
                       >

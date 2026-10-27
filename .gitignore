@@ -47,3 +47,6 @@ coverage/
 # Platform-managed state
 /.plugins/
 /.opencode-skills/
+
+.env.txt
+supabase/.temp/

@@ -3,7 +3,7 @@
 export type Role = "owner" | "manager" | "worker";
 export type Status = "pending" | "approved" | "rejected" | "deactivated";
 export type PayType = "piece" | "daily";
-export type Section = "S1" | "S2" | "S3" | "S4" | "S5" | "S6";
+export type Section = string;
 export type View = "dashboard" | "workers" | "accounts" | "attendance" | "production" | "mywork" | "payout" | "reports";
 
 export interface User {
@@ -30,6 +30,13 @@ export interface User {
   hourlyOT?: number;
   workDays?: number;
   monthlySalary?: number;
+}
+
+export interface CompanySection {
+  code: Section;
+  name: string;
+  position: number;
+  active: boolean;
 }
 
 export interface Order {
@@ -80,12 +87,12 @@ export interface DB {
   company: {
     id: string;
     name: string;
-    slug: string;
     status: string;
   } | null;
   users: User[];
   orders: Order[];
   pieceRates: Record<Section, number>;
+  sections: CompanySection[];
   attendance: Record<string, Record<string, AttendanceRecord>>;
   submissions: Submission[];
   payments: Payment[];
@@ -117,7 +124,7 @@ export interface ToastItem {
 
 // ===================== CONSTANTS =====================
 
-export const SECTION_NAMES: Record<Section, string> = {
+export const SECTION_NAMES: Record<string, string> = {
   S1: "Cutting",
   S2: "Stitching",
   S3: "Embroidery",
@@ -126,7 +133,7 @@ export const SECTION_NAMES: Record<Section, string> = {
   S6: "Packing",
 };
 
-export const SECTION_COLORS: Record<Section, { bg: string; text: string }> = {
+export const SECTION_COLORS: Record<string, { bg: string; text: string }> = {
   S1: { bg: "#7c2d12", text: "#fb923c" },
   S2: { bg: "#1e3a5f", text: "#60a5fa" },
   S3: { bg: "#3b0764", text: "#c084fc" },
@@ -136,6 +143,31 @@ export const SECTION_COLORS: Record<Section, { bg: string; text: string }> = {
 };
 
 export const SECTIONS: Section[] = ["S1", "S2", "S3", "S4", "S5", "S6"];
+
+export const DEFAULT_COMPANY_SECTIONS: CompanySection[] = SECTIONS.map((code, index) => ({
+  code,
+  name: SECTION_NAMES[code],
+  position: index + 1,
+  active: true,
+}));
+
+const EXTRA_SECTION_COLORS = [
+  { bg: "#134e4a", text: "#5eead4" },
+  { bg: "#713f12", text: "#fcd34d" },
+  { bg: "#312e81", text: "#a5b4fc" },
+  { bg: "#831843", text: "#f9a8d4" },
+  { bg: "#164e63", text: "#67e8f9" },
+];
+
+export function sectionColor(code: Section) {
+  if (SECTION_COLORS[code]) return SECTION_COLORS[code];
+  const hash = [...code].reduce((value, char) => value + char.charCodeAt(0), 0);
+  return EXTRA_SECTION_COLORS[hash % EXTRA_SECTION_COLORS.length];
+}
+
+export function sectionLabel(code: Section, sections: CompanySection[] = DEFAULT_COMPANY_SECTIONS) {
+  return sections.find((section) => section.code === code)?.name ?? SECTION_NAMES[code] ?? code;
+}
 
 export const NAV_ITEMS_DEFINITIONS: Record<Role, { id: View; label: string }[]> = {
   owner: [
@@ -223,6 +255,7 @@ export function createDefaultDB(): DB {
     users: [],
     orders: [],
     pieceRates,
+    sections: DEFAULT_COMPANY_SECTIONS.map((section) => ({ ...section })),
     attendance: {},
     submissions: [],
     payments: [],
@@ -281,15 +314,16 @@ export function calcSalaries(month: string, db: DB): Map<string, SalaryInfo> {
   return result;
 }
 
-export function updateOrderStage(order: Order, stage: Section, value: number): Order {
+export function updateOrderStage(order: Order, stage: Section, value: number, pipeline: Section[] = SECTIONS): Order {
   const stages = { ...order.stages };
-  const idx = SECTIONS.indexOf(stage);
-  const maxVal = idx === 0 ? order.target : stages[SECTIONS[idx - 1]];
+  const idx = pipeline.indexOf(stage);
+  if (idx < 0) return order;
+  const maxVal = idx === 0 ? order.target : stages[pipeline[idx - 1]] ?? 0;
   const clamped = Math.max(0, Math.min(value, maxVal));
   stages[stage] = clamped;
   let cap = clamped;
-  for (let i = idx + 1; i < SECTIONS.length; i++) {
-    const s = SECTIONS[i];
+  for (let i = idx + 1; i < pipeline.length; i++) {
+    const s = pipeline[i];
     if (stages[s] > cap) stages[s] = cap;
     cap = stages[s];
   }

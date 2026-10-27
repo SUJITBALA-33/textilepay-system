@@ -21,7 +21,7 @@ const admin = () =>
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
 
-async function authenticate(c: { req: { header: (name: string) => string | undefined } }) {
+async function authenticate(c: any) {
   const authorization = c.req.header("Authorization");
   const token = authorization?.replace(/^Bearer\s+/i, "");
   if (!token) throw new Error("UNAUTHORIZED");
@@ -36,9 +36,10 @@ async function authenticate(c: { req: { header: (name: string) => string | undef
     .eq("id", user.id)
     .single();
   if (profileError || !profile) throw new Error("PROFILE_NOT_FOUND");
+  if (profile.status !== "approved") throw new Error("ACCOUNT_NOT_APPROVED");
   const { data: company, error: companyError } = await client
     .from("companies")
-    .select("id, name, slug, status")
+    .select("id, name, status")
     .eq("id", profile.company_id)
     .single();
   if (companyError || !company) throw new Error("COMPANY_NOT_FOUND");
@@ -52,6 +53,7 @@ function fail(c: any, error: unknown) {
   if (message === "PROFILE_NOT_FOUND") return c.json({ error: "User profile is not configured" }, 403);
   if (message === "COMPANY_NOT_FOUND") return c.json({ error: "Company is not configured" }, 403);
   if (message === "COMPANY_INACTIVE") return c.json({ error: "Company subscription is not active" }, 403);
+  if (message === "ACCOUNT_NOT_APPROVED") return c.json({ error: "Your account is awaiting company approval or is no longer active." }, 403);
   if (message.startsWith("Cross-company")) return c.json({ error: message }, 403);
   console.error("TextilePay API error", error);
   return c.json({ error: "Unable to process the request" }, 500);
@@ -95,6 +97,7 @@ async function loadDatabase(client: ReturnType<typeof admin>, viewer: any, compa
     privateResult,
     ordersResult,
     ratesResult,
+    sectionsResult,
     attendanceResult,
     submissionsResult,
     paymentsResult,
@@ -104,6 +107,7 @@ async function loadDatabase(client: ReturnType<typeof admin>, viewer: any, compa
     client.from("profile_private").select("*").eq("company_id", viewer.company_id),
     client.from("orders").select("*").eq("company_id", viewer.company_id).order("created_at"),
     client.from("piece_rates").select("*").eq("company_id", viewer.company_id),
+    client.from("company_sections").select("*").eq("company_id", viewer.company_id).order("position"),
     client.from("attendance").select("*").eq("company_id", viewer.company_id),
     client.from("submissions").select("*").eq("company_id", viewer.company_id).order("created_at"),
     client.from("payments").select("*").eq("company_id", viewer.company_id).order("created_at"),
@@ -115,6 +119,7 @@ async function loadDatabase(client: ReturnType<typeof admin>, viewer: any, compa
     privateResult.error,
     ordersResult.error,
     ratesResult.error,
+    sectionsResult.error,
     attendanceResult.error,
     submissionsResult.error,
     paymentsResult.error,
@@ -154,11 +159,17 @@ async function loadDatabase(client: ReturnType<typeof admin>, viewer: any, compa
       target: order.target,
       revenue: Number(order.revenue),
       costs: Number(order.costs),
-      stages: { S1: order.s1, S2: order.s2, S3: order.s3, S4: order.s4, S5: order.s5, S6: order.s6 },
+      stages: order.stage_values ?? { S1: order.s1, S2: order.s2, S3: order.s3, S4: order.s4, S5: order.s5, S6: order.s6 },
       createdAt: order.created_at,
       status: order.status,
     })),
     pieceRates: Object.fromEntries((ratesResult.data ?? []).map((row) => [row.section, Number(row.rate)])),
+    sections: (sectionsResult.data ?? []).map((row) => ({
+      code: row.code,
+      name: row.name,
+      position: row.position,
+      active: row.active,
+    })),
     attendance,
     submissions: (submissionsResult.data ?? [])
       .filter((row) => canSeeOperations || row.user_id === viewer.id)
@@ -208,7 +219,7 @@ function profileRow(user: any, companyId: string) {
     mobile: user.mobile ?? "",
     role: user.role,
     status: user.status,
-    section: user.role === "worker" ? user.section ?? "S1" : null,
+    section: user.role === "worker" ? user.section : null,
     pay_type: user.role === "worker" ? user.payType ?? "piece" : null,
     daily_rate: Number(user.dailyRate ?? 0),
     hourly_ot: Number(user.hourlyOT ?? 0),
@@ -247,9 +258,34 @@ function orderRow(order: any, companyId: string) {
     s4: Number(order.stages?.S4 ?? 0),
     s5: Number(order.stages?.S5 ?? 0),
     s6: Number(order.stages?.S6 ?? 0),
+    stage_values: order.stages ?? {},
     status: order.status,
     created_at: order.createdAt,
   };
+}
+
+function validateOrderPipeline(orders: any[], sectionRows: any[]) {
+  const activeCodes = sectionRows
+    .filter((section) => section.active)
+    .sort((a, b) => a.position - b.position)
+    .map((section) => section.code as string);
+  if (!activeCodes.length) throw new Error("Company must retain an active production section");
+  for (const order of orders) {
+    let previous = Number(order.target);
+    if (!Number.isInteger(previous) || previous < 0) throw new Error("Invalid order target");
+    for (const code of activeCodes) {
+      const value = Number(order.stages?.[code] ?? 0);
+      if (!Number.isInteger(value) || value < 0 || value > previous) {
+        throw new Error("Production counts must be whole numbers within the previous stage capacity");
+      }
+      previous = value;
+    }
+    for (const value of Object.values(order.stages ?? {})) {
+      if (!Number.isInteger(Number(value)) || Number(value) < 0) {
+        throw new Error("Production counts must be non-negative whole numbers");
+      }
+    }
+  }
 }
 
 async function assertCompanyUsers(
@@ -274,6 +310,35 @@ async function saveOwnerDatabase(
   companyId: string,
   data: any,
 ) {
+  const sections = Array.isArray(data.sections) ? data.sections : [];
+  if (sections.length) {
+    if (!sections.some((section: any) => section.active)) throw new Error("Company must retain an active production section");
+    if (new Set(sections.map((section: any) => section.code)).size !== sections.length) throw new Error("Duplicate company section code");
+    if (new Set(sections.map((section: any) => Number(section.position))).size !== sections.length) throw new Error("Section order must not contain duplicates");
+    if (new Set(sections.map((section: any) => String(section.name).trim().toLowerCase())).size !== sections.length) throw new Error("Company section names must be unique");
+    for (const section of sections) {
+      if (!/^S[0-9]+$/.test(section.code) || !String(section.name).trim() || section.name.length > 80 || !Number.isInteger(Number(section.position)) || Number(section.position) < 1) {
+        throw new Error("Invalid company section configuration");
+      }
+    }
+    assertNoError((await client.from("company_sections").upsert(
+      sections.map((section: any) => ({
+        company_id: companyId,
+        code: section.code,
+        name: String(section.name).trim(),
+        position: Number(section.position),
+        active: Boolean(section.active),
+      })),
+    )).error);
+  }
+
+  const { data: sectionRows, error: sectionLoadError } = await client
+    .from("company_sections")
+    .select("code, position, active")
+    .eq("company_id", companyId);
+  assertNoError(sectionLoadError);
+  validateOrderPipeline(data.orders, sectionRows ?? []);
+
   const users = data.users.filter((user: any) => user.id && user.email);
   const userIds = users.map((user: any) => user.id);
   if (userIds.length) {
@@ -379,6 +444,12 @@ async function saveOwnerDatabase(
 }
 
 async function saveManagerDatabase(client: ReturnType<typeof admin>, companyId: string, data: any) {
+  const { data: sectionRows, error: sectionError } = await client
+    .from("company_sections")
+    .select("code, position, active")
+    .eq("company_id", companyId);
+  assertNoError(sectionError);
+  validateOrderPipeline(data.orders, sectionRows ?? []);
   for (const order of data.orders) {
     const row = orderRow(order, companyId);
     const { error } = await client.from("orders").update({
@@ -388,6 +459,7 @@ async function saveManagerDatabase(client: ReturnType<typeof admin>, companyId: 
       s4: row.s4,
       s5: row.s5,
       s6: row.s6,
+      stage_values: row.stage_values,
       status: row.status,
     }).eq("id", row.id).eq("company_id", companyId);
     assertNoError(error);
@@ -470,6 +542,30 @@ app.post("/make-server-32660b5b/users", async (c) => {
       return c.json({ error: "Password must be at least 8 characters" }, 400);
     }
 
+    let workerSection: string | null = null;
+    if (requestedRole === "worker") {
+      const { data: firstSection, error: sectionError } = await client
+        .from("company_sections")
+        .select("code")
+        .eq("company_id", profile.company_id)
+        .eq("active", true)
+        .order("position")
+        .limit(1)
+        .maybeSingle();
+      assertNoError(sectionError);
+      workerSection = typeof form.section === "string" && form.section ? form.section : firstSection?.code;
+      if (!workerSection || !firstSection) return c.json({ error: "Configure an active company section before creating workers" }, 400);
+      const { data: validSection, error: validSectionError } = await client
+        .from("company_sections")
+        .select("code")
+        .eq("company_id", profile.company_id)
+        .eq("code", workerSection)
+        .eq("active", true)
+        .maybeSingle();
+      assertNoError(validSectionError);
+      if (!validSection) return c.json({ error: "Choose an active company section" }, 400);
+    }
+
     const { data, error } = await client.auth.admin.createUser({
       email: form.email.trim().toLowerCase(),
       password: form.password,
@@ -480,7 +576,7 @@ app.post("/make-server-32660b5b/users", async (c) => {
         mobile: form.mobile.trim(),
         role: requestedRole,
         company_id: profile.company_id,
-        section: requestedRole === "worker" ? form.section || "S1" : null,
+        section: workerSection,
         pay_type: requestedRole === "worker" ? form.payType || "piece" : null,
         address: String(form.address || "").trim(),
         aadhaar: String(form.aadhaar || "").trim(),
@@ -493,6 +589,19 @@ app.post("/make-server-32660b5b/users", async (c) => {
       },
     });
     if (error) return c.json({ error: error.message }, 400);
+    if (requestedRole === "manager") {
+      const { error: roleError } = await client
+        .from("profiles")
+        .update({ role: "manager", section: null, pay_type: null })
+        .eq("id", data.user.id)
+        .eq("company_id", profile.company_id)
+        .eq("status", "pending");
+      if (roleError) {
+        const { error: cleanupError } = await client.auth.admin.deleteUser(data.user.id);
+        if (cleanupError) console.error("Failed to roll back manager account creation", cleanupError);
+        return c.json({ error: "Unable to finish manager account setup" }, 500);
+      }
+    }
     return c.json({ id: data.user.id, status: "pending" }, 201);
   } catch (error) {
     return fail(c, error);

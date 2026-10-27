@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useId } from "react";
 import {
   CheckCircle,
   XCircle,
@@ -10,8 +10,8 @@ import {
   type Section,
   type Status,
   type ToastItem,
-  SECTION_NAMES,
-  SECTION_COLORS,
+  sectionLabel,
+  sectionColor,
   genId,
 } from "../../lib/payroll";
 
@@ -42,23 +42,24 @@ export function useToast() {
 
 export function ToastContainer({ toasts }: { toasts: ToastItem[] }) {
   const icons = {
-    success: <CheckCircle size={15} className="text-green-400 flex-shrink-0" />,
-    error: <XCircle size={15} className="text-red-400 flex-shrink-0" />,
-    warning: <AlertTriangle size={15} className="text-amber-400 flex-shrink-0" />,
-    info: <AlertCircle size={15} className="text-blue-400 flex-shrink-0" />,
+    success: <CheckCircle size={17} className="status-icon-success shrink-0" />,
+    error: <XCircle size={17} className="status-icon-error shrink-0" />,
+    warning: <AlertTriangle size={17} className="status-icon-warning shrink-0" />,
+    info: <AlertCircle size={17} className="status-icon-info shrink-0" />,
   };
   const borders = {
-    success: "border-green-500/25 bg-green-950/80",
-    error: "border-red-500/25 bg-red-950/80",
-    warning: "border-amber-500/25 bg-amber-950/80",
-    info: "border-blue-500/25 bg-blue-950/80",
+    success: "toast-success",
+    error: "toast-error",
+    warning: "toast-warning",
+    info: "toast-info",
   };
   return (
-    <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 w-80">
+    <div aria-live="polite" className="fixed right-3 top-3 z-[9999] flex w-[min(22rem,calc(100vw-1.5rem))] flex-col gap-2 sm:right-5 sm:top-5">
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`flex items-center gap-2.5 px-4 py-3 rounded-lg border backdrop-blur-sm ${borders[t.type]}`}
+          role={t.type === "error" ? "alert" : "status"}
+          className={`flex items-center gap-3 rounded-xl border bg-white px-4 py-3 shadow-lg ${borders[t.type]}`}
         >
           {icons[t.type]}
           <span className="text-sm text-foreground leading-snug">{t.message}</span>
@@ -76,15 +77,15 @@ export function Badge({
   variant?: "default" | "success" | "warning" | "error" | "info";
 }) {
   const styles: Record<string, string> = {
-    default: "bg-secondary text-secondary-foreground",
-    success: "bg-green-900/50 text-green-400 border border-green-500/20",
-    warning: "bg-amber-900/50 text-amber-400 border border-amber-500/20",
-    error: "bg-red-900/50 text-red-400 border border-red-500/20",
-    info: "bg-blue-900/50 text-blue-400 border border-blue-500/20",
+    default: "bg-secondary text-secondary-foreground border border-border",
+    success: "badge-success",
+    warning: "badge-warning",
+    error: "badge-error",
+    info: "badge-info",
   };
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${styles[variant]}`}
+      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${styles[variant]}`}
     >
       {children}
     </span>
@@ -102,9 +103,15 @@ export function ProgressBar({
 }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
-    <div className="w-full bg-muted rounded-full h-1.5">
+    <div
+      className="h-2 w-full overflow-hidden rounded-full bg-muted"
+      role="progressbar"
+      aria-valuenow={Math.round(pct)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
       <div
-        className="h-1.5 rounded-full transition-all duration-500"
+        className="h-full rounded-full transition-[width] duration-500"
         style={{ width: `${pct}%`, backgroundColor: color }}
       />
     </div>
@@ -128,25 +135,35 @@ export function Modal({
   const widths = { sm: "max-w-sm", md: "max-w-md", lg: "max-w-2xl" };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <button
+        type="button"
+        className="absolute inset-0 h-full w-full cursor-default bg-slate-950/45 backdrop-blur-[2px]"
+        onClick={onClose}
+        aria-label="Close dialog"
+      />
       <div
-        className={`relative bg-card border border-border rounded-xl shadow-2xl w-full ${widths[size]} max-h-[90vh] overflow-y-auto`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+        className={`surface relative w-full ${widths[size]} max-h-[min(90dvh,48rem)] overflow-y-auto shadow-2xl`}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <h2
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card/95 px-5 py-4 backdrop-blur-sm sm:px-6">
+          <h2 id="modal-title"
             className="text-base font-medium text-foreground"
             style={{ fontFamily: "'Instrument Serif', serif" }}
           >
             {title}
           </h2>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
+            aria-label="Close dialog"
+            className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <X size={15} />
           </button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className="p-5 sm:p-6">{children}</div>
       </div>
     </div>
   );
@@ -166,14 +183,14 @@ export function StatCard({
   color: string;
 }) {
   return (
-    <div className="bg-card border border-border rounded-xl p-5">
+    <div className="surface stat-card p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1.5">
             {label}
           </p>
           <p
-            className="text-xl font-medium text-foreground truncate"
+            className="truncate text-2xl font-semibold tracking-tight text-foreground sm:text-[1.7rem]"
             style={{ fontFamily: "'JetBrains Mono', monospace" }}
           >
             {value}
@@ -181,8 +198,8 @@ export function StatCard({
           {sub && <p className="text-xs text-muted-foreground mt-1 leading-snug">{sub}</p>}
         </div>
         <div
-          className="p-2.5 rounded-lg flex-shrink-0"
-          style={{ backgroundColor: color + "20" }}
+          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl"
+          style={{ backgroundColor: color + "18" }}
         >
           <Icon size={18} style={{ color }} />
         </div>
@@ -195,16 +212,19 @@ export function Inp({
   label,
   ...props
 }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string }) {
+  const generatedId = useId();
+  const inputId = props.id ?? generatedId;
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex min-w-0 flex-col gap-2">
       {label && (
-        <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+        <label htmlFor={inputId} className="text-sm font-medium text-foreground">
           {label}
         </label>
       )}
       <input
         {...props}
-        className={`w-full px-3 py-2.5 bg-muted border border-border rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors ${
+        id={inputId}
+        className={`form-control ${
           props.className ?? ""
         }`}
       />
@@ -217,16 +237,19 @@ export function Sel({
   children,
   ...props
 }: React.SelectHTMLAttributes<HTMLSelectElement> & { label?: string }) {
+  const generatedId = useId();
+  const selectId = props.id ?? generatedId;
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex min-w-0 flex-col gap-2">
       {label && (
-        <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+        <label htmlFor={selectId} className="text-sm font-medium text-foreground">
           {label}
         </label>
       )}
       <select
         {...props}
-        className={`w-full px-3 py-2.5 bg-muted border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors ${
+        id={selectId}
+        className={`form-control ${
           props.className ?? ""
         }`}
       >
@@ -247,14 +270,14 @@ export function Btn({
   size?: "sm" | "md";
 }) {
   const base =
-    "inline-flex items-center gap-1.5 font-medium rounded-lg transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
-  const sizes = { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2.5 text-sm" };
+    "inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-[background,color,transform,box-shadow] duration-150 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-55 cursor-pointer";
+  const sizes = { sm: "min-h-10 px-3.5 text-xs", md: "min-h-11 px-4 text-sm" };
   const variants: Record<string, string> = {
-    primary: "bg-primary text-primary-foreground hover:opacity-90 active:scale-95",
+    primary: "bg-primary text-primary-foreground shadow-sm hover:bg-teal-800 active:translate-y-px",
     secondary:
-      "bg-secondary text-secondary-foreground border border-border hover:bg-accent hover:text-accent-foreground",
-    danger: "bg-red-900/30 text-red-400 border border-red-500/20 hover:bg-red-900/50",
-    ghost: "text-muted-foreground hover:text-foreground hover:bg-muted",
+      "border border-border bg-white text-secondary-foreground hover:bg-secondary",
+    danger: "border border-red-200 bg-red-50 text-red-800 hover:bg-red-100",
+    ghost: "text-muted-foreground hover:bg-muted hover:text-foreground",
   };
   return (
     <button
@@ -266,16 +289,17 @@ export function Btn({
   );
 }
 
-export function SectionTag({ section }: { section: Section }) {
+export function SectionTag({ section, label }: { section: Section; label?: string }) {
+  const colors = sectionColor(section);
   return (
     <span
-      className="text-xs px-2 py-0.5 rounded font-medium"
+      className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold"
       style={{
-        backgroundColor: SECTION_COLORS[section].bg,
-        color: SECTION_COLORS[section].text,
+        backgroundColor: colors.bg,
+        color: colors.text,
       }}
     >
-      {section} {SECTION_NAMES[section]}
+      {section} {label ?? sectionLabel(section)}
     </span>
   );
 }

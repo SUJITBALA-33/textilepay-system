@@ -4,15 +4,16 @@ import {
   CheckCircle,
   XCircle,
   Trash2,
+  Search,
 } from "lucide-react";
 import {
   type Section,
   type PayType,
   type Status,
   type User,
-  SECTIONS,
-  SECTION_NAMES,
-  SECTION_COLORS,
+  type CompanySection,
+  sectionColor,
+  updateOrderStage,
   formatMoney,
 } from "../../lib/payroll";
 import {
@@ -34,13 +35,14 @@ export function WorkersView({
   toast,
   createAccount,
 }: ViewProps) {
-  const [tab, setTab] = useState<"pending" | "workers" | "managers" | "rates" | "ot">(
+  const [tab, setTab] = useState<"pending" | "workers" | "managers" | "rates" | "sections" | "ot">(
     "pending"
   );
   const [showCreateAccount, setShowCreateAccount] = useState(false);
+  const [workerQuery, setWorkerQuery] = useState("");
   const [approveTarget, setApproveTarget] = useState<User | null>(null);
   const [approveForm, setApproveForm] = useState({
-    section: "S1" as Section,
+    section: (db.sections.find((section) => section.active)?.code ?? "S1") as Section,
     payType: "piece" as PayType,
     dailyRate: "500",
     hourlyOT: "80",
@@ -48,8 +50,12 @@ export function WorkersView({
     monthlySalary: "35000",
   });
   const [ratesForm, setRatesForm] = useState({ ...db.pieceRates });
+  const [sectionDraft, setSectionDraft] = useState<CompanySection[]>(db.sections.map((section) => ({ ...section })));
   const approvedWorkers = db.users.filter(
     (u) => u.role === "worker" && u.status === "approved"
+  );
+  const [workerSectionDraft, setWorkerSectionDraft] = useState<Record<string, string>>(
+    Object.fromEntries(approvedWorkers.map((worker) => [worker.id, worker.section ?? ""]))
   );
   const [otRatesForm, setOtRatesForm] = useState<Record<string, string>>(
     Object.fromEntries(
@@ -61,18 +67,25 @@ export function WorkersView({
   );
 
   const pending = db.users.filter((u) => u.status === "pending");
+  const activeSections = db.sections.filter((section) => section.active).sort((a, b) => a.position - b.position);
+  const orderedSections = [...sectionDraft].sort((a, b) => a.position - b.position);
   const workers = db.users.filter(
     (u) => u.role === "worker" && u.status !== "rejected"
   );
   const managers = db.users.filter(
     (u) => u.role === "manager" && u.status !== "rejected"
   );
+  const filteredWorkers = workers.filter((worker) =>
+    `${worker.name} ${worker.mobile} ${worker.username}`
+      .toLowerCase()
+      .includes(workerQuery.trim().toLowerCase())
+  );
 
   function openApprove(u: User) {
     setApproveTarget(u);
     setApproveForm((f) => ({
       ...f,
-      section: u.section ?? "S1",
+      section: u.section ?? activeSections[0]?.code ?? "S1",
       payType: u.payType ?? "piece",
       dailyRate: String(u.dailyRate ?? 500),
       hourlyOT: String(u.hourlyOT ?? 80),
@@ -137,6 +150,71 @@ export function WorkersView({
     toast.success("Piece rates updated");
   }
 
+  function addSection() {
+    const nextNumber = sectionDraft.reduce((max, section) => {
+      const match = section.code.match(/^S(\d+)$/);
+      return Math.max(max, match ? Number(match[1]) : 0);
+    }, 0) + 1;
+    const code = `S${nextNumber}`;
+    setSectionDraft((sections) => [...sections, {
+      code,
+      name: `New Section ${nextNumber}`,
+      position: Math.max(0, ...sections.map((section) => section.position)) + 1,
+      active: true,
+    }]);
+    setRatesForm((rates) => ({ ...rates, [code]: 0 }));
+  }
+
+  function moveSection(code: string, delta: -1 | 1) {
+    const sorted = [...sectionDraft].sort((a, b) => a.position - b.position);
+    const index = sorted.findIndex((section) => section.code === code);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= sorted.length) return;
+    [sorted[index], sorted[target]] = [sorted[target], sorted[index]];
+    setSectionDraft(sorted.map((section, position) => ({ ...section, position: position + 1 })));
+  }
+
+  function saveSections() {
+    if (!sectionDraft.some((section) => section.active)) {
+      toast.error("Keep at least one active section.");
+      return;
+    }
+    if (sectionDraft.some((section) => !section.name.trim()) || new Set(sectionDraft.map((section) => section.name.trim().toLowerCase())).size !== sectionDraft.length) {
+      toast.error("Section names must be filled in and unique within this company.");
+      return;
+    }
+    const nextUsers = db.users.map((worker) => {
+      if (worker.role !== "worker" || worker.status !== "approved") return worker;
+      const nextSection = workerSectionDraft[worker.id] ?? worker.section ?? "";
+      if (!sectionDraft.some((section) => section.code === nextSection && section.active)) return worker;
+      return { ...worker, section: nextSection };
+    });
+    if (approvedWorkers.some((worker) => !sectionDraft.some((section) => section.code === (workerSectionDraft[worker.id] ?? worker.section) && section.active))) {
+      toast.error("Assign workers to active sections before deactivating their current section.");
+      return;
+    }
+    const pipeline = sectionDraft.filter((section) => section.active).sort((a, b) => a.position - b.position).map((section) => section.code);
+    const orders = db.orders.map((order) => {
+      let next = {
+        ...order,
+        stages: {
+          ...order.stages,
+          ...Object.fromEntries(sectionDraft.map((section) => [section.code, order.stages[section.code] ?? 0])),
+        },
+      };
+      for (const code of pipeline) next = updateOrderStage(next, code, next.stages[code] ?? 0, pipeline);
+      return next;
+    });
+    update({
+      ...db,
+      sections: sectionDraft.map((section) => ({ ...section, name: section.name.trim() })),
+      pieceRates: { ...db.pieceRates, ...ratesForm },
+      orders,
+      users: nextUsers,
+    });
+    toast.success("Company sections updated");
+  }
+
   function saveOtRates() {
     const updatedUsers = db.users.map((u) => {
       const val = otRatesForm[u.id];
@@ -153,18 +231,18 @@ export function WorkersView({
   }
 
   const tabCls = (t: string) =>
-    `px-4 py-1.5 rounded-md text-sm transition-all capitalize cursor-pointer ${
+    `min-h-11 rounded-xl px-4 text-sm font-medium capitalize transition-all cursor-pointer ${
       tab === t
-        ? "bg-card text-foreground shadow-sm"
+        ? "bg-white text-foreground shadow-sm"
         : "text-muted-foreground hover:text-foreground"
     }`;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1
-            className="text-2xl text-foreground font-normal"
+            className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl"
             style={{ fontFamily: "'Instrument Serif', serif" }}
           >
             Workers &amp; Rates
@@ -178,11 +256,11 @@ export function WorkersView({
         </Btn>
       </div>
 
-      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit flex-wrap">
-        {(["pending", "workers", "managers", "rates", "ot"] as const).map(
+      <div role="group" aria-label="Workforce sections" className="flex w-full flex-wrap gap-1 rounded-2xl border border-border bg-[#edf3f1] p-1 sm:w-fit">
+        {(["pending", "workers", "managers", "rates", "sections", "ot"] as const).map(
           (t) => (
-            <button key={t} onClick={() => setTab(t)} className={tabCls(t)}>
-              {t === "ot" ? "OT Rates" : t}
+            <button key={t} type="button" aria-pressed={tab === t} onClick={() => setTab(t)} className={tabCls(t)}>
+              {t === "ot" ? "OT Rates" : t === "sections" ? "Sections" : t}
               {t === "pending" && pending.length > 0 && (
                 <span className="ml-1.5 text-xs bg-amber-500 text-black rounded-full px-1.5 py-0.5 font-semibold">
                   {pending.length}
@@ -212,7 +290,7 @@ export function WorkersView({
                         {u.name}
                       </span>
                       <Badge variant="warning">{u.role}</Badge>
-                      {u.section && <SectionTag section={u.section} />}
+                      {u.section && <SectionTag section={u.section} label={db.sections.find((section) => section.code === u.section)?.name} />}
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-muted-foreground">
                       <span>📱 {u.mobile}</span>
@@ -247,7 +325,20 @@ export function WorkersView({
       )}
 
       {tab === "workers" && (
-        <div className="bg-card border border-border rounded-xl overflow-x-auto">
+        <div className="space-y-4">
+          <div className="relative max-w-md">
+            <label htmlFor="worker-search" className="mb-2 block text-sm font-medium text-foreground">Find a worker</label>
+            <Search size={17} className="pointer-events-none absolute left-3 top-[2.85rem] text-muted-foreground" aria-hidden="true" />
+            <input
+              id="worker-search"
+              type="search"
+              value={workerQuery}
+              onChange={(event) => setWorkerQuery(event.target.value)}
+              placeholder="Search by name, phone, or username"
+              className="form-control pl-10"
+            />
+          </div>
+          <div className="bg-card border border-border rounded-xl overflow-x-auto">
           <table className="w-full text-sm min-w-[560px]">
             <thead>
               <tr className="border-b border-border">
@@ -266,7 +357,7 @@ export function WorkersView({
               </tr>
             </thead>
             <tbody>
-              {workers.map((w, i) => (
+              {filteredWorkers.map((w, i) => (
                 <tr
                   key={w.id}
                   className={`border-b border-border last:border-0 hover:bg-muted/20 transition-colors ${
@@ -279,7 +370,7 @@ export function WorkersView({
                   </td>
                   <td className="px-4 py-3">
                     {w.section ? (
-                      <SectionTag section={w.section} />
+                      <SectionTag section={w.section} label={db.sections.find((section) => section.code === w.section)?.name} />
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
@@ -317,18 +408,19 @@ export function WorkersView({
                   </td>
                 </tr>
               ))}
-              {workers.length === 0 && (
+              {filteredWorkers.length === 0 && (
                 <tr>
                   <td
                     colSpan={6}
                     className="px-4 py-8 text-center text-muted-foreground text-sm"
                   >
-                    No workers yet.
+                    {workers.length === 0 ? "No workers yet." : "No workers match that search."}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -413,19 +505,22 @@ export function WorkersView({
             Amount paid per piece processed in each section.
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-5">
-            {SECTIONS.map((s) => (
+            {activeSections.map((section) => {
+              const s = section.code;
+              const color = sectionColor(s);
+              return (
               <div key={s} className="flex flex-col gap-1.5">
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span
                     className="text-xs px-1.5 py-0.5 rounded font-medium"
                     style={{
-                      backgroundColor: SECTION_COLORS[s].bg,
-                      color: SECTION_COLORS[s].text,
+                      backgroundColor: color.bg,
+                      color: color.text,
                     }}
                   >
                     {s}
                   </span>
-                  {SECTION_NAMES[s]}
+                  {section.name}
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
@@ -444,12 +539,66 @@ export function WorkersView({
                   />
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
           <Btn onClick={saveRates}>
             <CheckCircle size={13} /> Save Rates
           </Btn>
         </div>
+      )}
+
+      {tab === "sections" && (
+        <section className="surface space-y-5 p-4 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Company production sections</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Rename, reorder, add, or deactivate sections for this company. Existing records are retained.</p>
+            </div>
+            <Btn type="button" variant="secondary" onClick={addSection}><Plus size={15} /> Add section</Btn>
+          </div>
+          <div className="space-y-2">
+            {orderedSections.map((section, index) => (
+              <div key={section.code} className="grid items-center gap-3 rounded-xl border border-border p-3 sm:grid-cols-[4rem_minmax(0,1fr)_auto_auto]">
+                <span className="text-xs font-semibold text-muted-foreground">{section.code}</span>
+                <Inp
+                  aria-label={`${section.code} section name`}
+                  value={section.name}
+                  onChange={(e) => setSectionDraft((items) => items.map((item) => item.code === section.code ? { ...item, name: e.target.value } : item))}
+                />
+                <div className="flex items-center gap-1">
+                  <Btn type="button" size="sm" variant="secondary" disabled={index === 0} aria-label={`Move ${section.name} up`} onClick={() => moveSection(section.code, -1)}>↑</Btn>
+                  <Btn type="button" size="sm" variant="secondary" disabled={index === orderedSections.length - 1} aria-label={`Move ${section.name} down`} onClick={() => moveSection(section.code, 1)}>↓</Btn>
+                </div>
+                <label className="flex min-h-11 items-center gap-2 text-sm text-foreground">
+                  <input type="checkbox" checked={section.active} onChange={(e) => setSectionDraft((items) => items.map((item) => item.code === section.code ? { ...item, active: e.target.checked } : item))} />
+                  Active
+                </label>
+              </div>
+            ))}
+          </div>
+          {approvedWorkers.length > 0 && (
+            <div className="space-y-3 border-t border-border pt-5">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Worker assignments</h3>
+                <p className="mt-1 text-xs text-muted-foreground">Move workers before deactivating their current section.</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {approvedWorkers.map((worker) => {
+                  const selected = workerSectionDraft[worker.id] ?? worker.section ?? "";
+                  const currentName = sectionDraft.find((section) => section.code === selected)?.name ?? selected;
+                  return (
+                    <Sel key={worker.id} label={worker.name} value={selected} onChange={(e) => setWorkerSectionDraft((assignments) => ({ ...assignments, [worker.id]: e.target.value }))}>
+                      {!sectionDraft.some((section) => section.code === selected && section.active) && <option value={selected} disabled>Inactive: {currentName}</option>}
+                      {sectionDraft.filter((section) => section.active).sort((a, b) => a.position - b.position).map((section) => <option key={section.code} value={section.code}>{section.name}</option>)}
+                    </Sel>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <Btn onClick={saveSections}><CheckCircle size={14} /> Save section setup</Btn>
+        </section>
       )}
 
       {tab === "ot" && (
@@ -541,7 +690,7 @@ export function WorkersView({
                       </td>
                       <td className="px-4 py-3">
                         {w.section ? (
-                          <SectionTag section={w.section} />
+                          <SectionTag section={w.section} label={db.sections.find((section) => section.code === w.section)?.name} />
                         ) : (
                           "—"
                         )}
@@ -604,10 +753,8 @@ export function WorkersView({
                   }))
                 }
               >
-                {SECTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s} — {SECTION_NAMES[s]}
-                  </option>
+                {activeSections.map((section) => (
+                  <option key={section.code} value={section.code}>{section.name}</option>
                 ))}
               </Sel>
               <Sel
@@ -691,6 +838,7 @@ export function WorkersView({
         <CreateAccountForm
           creatorRole={user.role}
           onCreate={createAccount}
+          sections={db.sections.filter((section) => section.active)}
           onDone={() => setShowCreateAccount(false)}
           toast={toast}
         />

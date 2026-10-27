@@ -2,9 +2,7 @@ import { useState, useEffect } from "react";
 import { Edit2, CheckCircle, AlertTriangle } from "lucide-react";
 import {
   type Section,
-  SECTIONS,
-  SECTION_NAMES,
-  SECTION_COLORS,
+  sectionColor,
   updateOrderStage,
 } from "../../lib/payroll";
 import {
@@ -16,17 +14,12 @@ import {
 import { type ViewProps } from "./DashboardView";
 
 export function ProductionView({ db, update, toast }: ViewProps) {
+  const sections = db.sections.filter((section) => section.active).sort((a, b) => a.position - b.position);
+  const pipeline = sections.map((section) => section.code);
   const [selectedOrderId, setSelectedOrderId] = useState(
     db.orders[0]?.id ?? ""
   );
-  const [editing, setEditing] = useState<Record<Section, string>>({
-    S1: "",
-    S2: "",
-    S3: "",
-    S4: "",
-    S5: "",
-    S6: "",
-  });
+  const [editing, setEditing] = useState<Record<Section, string>>({});
   const [editMode, setEditMode] = useState(false);
 
   const order = db.orders.find((o) => o.id === selectedOrderId);
@@ -35,17 +28,17 @@ export function ProductionView({ db, update, toast }: ViewProps) {
     if (order) {
       setEditing(
         Object.fromEntries(
-          SECTIONS.map((s) => [s, String(order.stages[s])])
+          pipeline.map((s) => [s, String(order.stages[s] ?? 0)])
         ) as Record<Section, string>
       );
     }
-  }, [selectedOrderId, order]);
+  }, [selectedOrderId, order, db.sections]);
 
   function saveStages() {
     if (!order) return;
     let updated = { ...order };
-    for (const s of SECTIONS) {
-      updated = updateOrderStage(updated, s, parseInt(editing[s]) || 0);
+    for (const s of pipeline) {
+      updated = updateOrderStage(updated, s, parseInt(editing[s]) || 0, pipeline);
     }
     const orders = db.orders.map((o) => (o.id === updated.id ? updated : o));
     update({ ...db, orders });
@@ -53,7 +46,7 @@ export function ProductionView({ db, update, toast }: ViewProps) {
     setEditMode(false);
     setEditing(
       Object.fromEntries(
-        SECTIONS.map((s) => [s, String(updated.stages[s])])
+        pipeline.map((s) => [s, String(updated.stages[s] ?? 0)])
       ) as Record<Section, string>
     );
   }
@@ -62,29 +55,27 @@ export function ProductionView({ db, update, toast }: ViewProps) {
     if (order)
       setEditing(
         Object.fromEntries(
-          SECTIONS.map((s) => [s, String(order.stages[s])])
+          pipeline.map((s) => [s, String(order.stages[s] ?? 0)])
         ) as Record<Section, string>
       );
     setEditMode(false);
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1
-            className="text-2xl text-foreground font-normal"
-            style={{ fontFamily: "'Instrument Serif', serif" }}
-          >
-            Production Flow
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Production flow
           </h1>
           <p className="text-sm text-muted-foreground">
-            Update stage counts for each order
+            Track output across this company’s production stages.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {db.orders.length > 0 && (
             <Sel
+              label="Choose order"
               value={selectedOrderId}
               onChange={(e) => {
                 setSelectedOrderId(e.target.value);
@@ -137,10 +128,11 @@ export function ProductionView({ db, update, toast }: ViewProps) {
             </div>
 
             <div className="space-y-4">
-              {SECTIONS.map((section, idx) => {
-                const count = order.stages[section];
+              {sections.map((sectionConfig, idx) => {
+                const section = sectionConfig.code;
+                const count = order.stages[section] ?? 0;
                 const prevCount =
-                  idx === 0 ? order.target : order.stages[SECTIONS[idx - 1]];
+                  idx === 0 ? order.target : order.stages[pipeline[idx - 1]] ?? 0;
                 const shortage = Math.max(0, prevCount - count);
                 const sectionWorkers = db.users.filter(
                   (u) =>
@@ -153,7 +145,7 @@ export function ProductionView({ db, update, toast }: ViewProps) {
                     (s) => s.orderId === order.id && s.section === section
                   )
                   .reduce((s, x) => s + x.pieces, 0);
-                const color = SECTION_COLORS[section].text;
+                const color = sectionColor(section).text;
 
                 return (
                   <div key={section}>
@@ -162,7 +154,7 @@ export function ProductionView({ db, update, toast }: ViewProps) {
                         className="w-20 text-xs font-medium flex-shrink-0"
                         style={{ color }}
                       >
-                        {section} {SECTION_NAMES[section]}
+                        {sectionConfig.name}
                       </span>
                       {editMode ? (
                         <input
@@ -222,13 +214,13 @@ export function ProductionView({ db, update, toast }: ViewProps) {
           {editMode && (
             <div className="bg-amber-900/15 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-400 flex items-center gap-2">
               <AlertTriangle size={14} />
-              Rules: S1 ≤ Target, S2 ≤ S1, S3 ≤ S2, etc. Later stages auto-cap if
-              you decrease an earlier one.
+              Each stage is capped at the previous stage. Later stages auto-cap when an earlier stage is reduced.
             </div>
           )}
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {SECTIONS.map((section) => {
+            {sections.map((sectionConfig) => {
+              const section = sectionConfig.code;
               const sw = db.users.filter(
                 (u) =>
                   u.role === "worker" &&
@@ -238,7 +230,7 @@ export function ProductionView({ db, update, toast }: ViewProps) {
               const total = db.submissions
                 .filter((s) => s.orderId === order.id && s.section === section)
                 .reduce((s, x) => s + x.pieces, 0);
-              const cap = order.stages[section];
+              const cap = order.stages[section] ?? 0;
               return (
                 <div
                   key={section}
@@ -248,14 +240,14 @@ export function ProductionView({ db, update, toast }: ViewProps) {
                     <span
                       className="text-xs px-2 py-0.5 rounded font-medium"
                       style={{
-                        backgroundColor: SECTION_COLORS[section].bg,
-                        color: SECTION_COLORS[section].text,
+                        backgroundColor: sectionColor(section).bg,
+                        color: sectionColor(section).text,
                       }}
                     >
                       {section}
                     </span>
                     <span className="text-sm font-medium text-foreground">
-                      {SECTION_NAMES[section]}
+                      {sectionConfig.name}
                     </span>
                   </div>
                   <div className="space-y-0.5 text-xs text-muted-foreground mb-3">

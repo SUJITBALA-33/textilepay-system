@@ -15,9 +15,7 @@ import {
   type DB,
   type Order,
   type User,
-  SECTIONS,
-  SECTION_NAMES,
-  SECTION_COLORS,
+  sectionColor,
   currentMonth,
   formatMoney,
   formatMonth,
@@ -43,12 +41,15 @@ export interface ViewProps {
 
 export function DashboardView({ db, update, toast }: ViewProps) {
   const month = currentMonth();
+  const activeSections = db.sections.filter((section) => section.active).sort((a, b) => a.position - b.position);
   const workers = db.users.filter((u) => u.role === "worker" && u.status === "approved");
   const pending = db.users.filter((u) => u.status === "pending");
   const totalRev = db.orders.reduce((s, o) => s + o.revenue, 0);
   const totalCost = db.orders.reduce((s, o) => s + o.costs, 0);
   const profit = totalRev - totalCost;
-  const packedPieces = db.orders.reduce((s, o) => s + (o.stages.S6 || 0), 0);
+  const finalStage = activeSections.at(-1)?.code;
+  const packedPieces = db.orders.reduce((s, o) => s + (finalStage ? o.stages[finalStage] || 0 : 0), 0);
+  const activeOrders = db.orders.filter((order) => order.status === "active");
   const [showAddOrder, setShowAddOrder] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [orderForm, setOrderForm] = useState({
@@ -71,7 +72,7 @@ export function DashboardView({ db, update, toast }: ViewProps) {
       target: parseInt(orderForm.target) || 0,
       revenue: parseFloat(orderForm.revenue) || 0,
       costs: parseFloat(orderForm.costs) || 0,
-      stages: { S1: 0, S2: 0, S3: 0, S4: 0, S5: 0, S6: 0 },
+      stages: Object.fromEntries(activeSections.map((section) => [section.code, 0])),
       createdAt: new Date().toISOString(),
       status: "active",
     };
@@ -107,17 +108,18 @@ export function DashboardView({ db, update, toast }: ViewProps) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
+          <p className="mb-1 max-w-full truncate text-xs font-semibold uppercase tracking-[0.15em] text-primary" title={db.company?.name}>{db.company?.name}</p>
           <h1
-            className="text-2xl text-foreground font-normal"
+            className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl"
             style={{ fontFamily: "'Instrument Serif', serif" }}
           >
-            Dashboard
+            Factory overview
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {formatMonth(month)} Overview
+            {formatMonth(month)} · A live view of payroll and production
           </p>
         </div>
         <div className="flex gap-2">
@@ -137,7 +139,7 @@ export function DashboardView({ db, update, toast }: ViewProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 sm:gap-4">
         <StatCard
           label="Revenue"
           value={formatMoney(totalRev)}
@@ -193,9 +195,13 @@ export function DashboardView({ db, update, toast }: ViewProps) {
       )}
 
       <div>
-        <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-          Production Orders
-        </h2>
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">Production orders</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Stage-by-stage progress across the factory floor.</p>
+          </div>
+          <span className="text-xs font-medium text-muted-foreground">{activeOrders.length} active · {db.orders.length} total</span>
+        </div>
         {db.orders.length === 0 && (
           <div className="bg-card border border-border rounded-xl p-10 text-center text-muted-foreground text-sm">
             No orders yet. Create your first order.
@@ -203,9 +209,9 @@ export function DashboardView({ db, update, toast }: ViewProps) {
         )}
         <div className="space-y-4">
           {db.orders.map((order) => {
-            const shortages = SECTIONS.filter((s, i) => {
-              if (i === 0) return order.target - order.stages.S1 > 50;
-              return order.stages[SECTIONS[i - 1]] - order.stages[s] > 30;
+            const shortages = activeSections.filter((section, i) => {
+              if (i === 0) return order.target - (order.stages[section.code] ?? 0) > 50;
+              return (order.stages[activeSections[i - 1].code] ?? 0) - (order.stages[section.code] ?? 0) > 30;
             });
             return (
               <div
@@ -242,13 +248,14 @@ export function DashboardView({ db, update, toast }: ViewProps) {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {SECTIONS.map((section) => {
-                    const count = order.stages[section];
+                  {activeSections.map((config) => {
+                    const section = config.code;
+                    const count = order.stages[section] ?? 0;
                     const pct =
                       order.target > 0
                         ? Math.round((count / order.target) * 100)
                         : 0;
-                    const color = SECTION_COLORS[section].text;
+                    const color = sectionColor(section).text;
                     return (
                       <div key={section}>
                         <div className="flex items-center justify-between mb-1">
@@ -256,7 +263,7 @@ export function DashboardView({ db, update, toast }: ViewProps) {
                             className="text-xs font-medium"
                             style={{ color }}
                           >
-                            {section} {SECTION_NAMES[section]}
+                            {config.name}
                           </span>
                           <span className="text-xs font-mono text-muted-foreground">
                             {count}/{order.target}
@@ -278,7 +285,7 @@ export function DashboardView({ db, update, toast }: ViewProps) {
                   <div className="mt-3 flex items-center gap-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-500/20 rounded-lg px-3 py-2">
                     <AlertTriangle size={13} />
                     Stage shortage:{" "}
-                    {shortages.map((s) => SECTION_NAMES[s]).join(", ")}
+                    {shortages.map((section) => section.name).join(", ")}
                   </div>
                 )}
               </div>
