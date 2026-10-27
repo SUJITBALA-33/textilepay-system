@@ -8,6 +8,7 @@ import {
   Wallet,
   Printer,
   X,
+  CreditCard,
 } from "lucide-react";
 import { type Role, type User, type View } from "../../lib/payroll";
 
@@ -19,6 +20,7 @@ export const NAV_ITEMS: Record<Role, { id: View; label: string; icon: React.Elem
     { id: "production", label: "Production", icon: Factory },
     { id: "payout", label: "Payroll & payouts", icon: Wallet },
     { id: "reports", label: "Reports", icon: Printer },
+    { id: "billing", label: "Billing & plan", icon: CreditCard },
   ],
   manager: [
     { id: "accounts", label: "Team operations", icon: Users },

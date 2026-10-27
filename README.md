@@ -506,11 +506,23 @@ supabase secrets set ALLOWED_ORIGIN=https://textilepay-system.vercel.app
 
 There is no platform administrator role or public company-registration page. A trusted platform operator provisions each company with the `owner:create` script. Run it only from a secured operator machine with the Supabase service-role key in the process environment; never add that key to `VITE_*` variables, browser storage, or frontend code. The script creates an active company, its approved initial owner, company piece-rate defaults, and company settings. The database generates a UUID for each company. If Auth creation fails, the script attempts to roll back its new company and reports cleanup failures.
 
-The first setup requires the production, multi-company, tenant-hardening, `20261027000200_remove_company_slugs.sql`, and `20261027000300_dynamic_company_sections.sql` migrations. Review each migration, back up production data, and apply it through your normal Supabase change process; this repository does not run migrations automatically. The tenant-hardening migration makes Auth signup metadata create only pending workers and grants tenant context only to approved users in active companies. The slug migration removes the unused company slug column while preserving company records and related data. The dynamic sections migration creates a company-specific section catalog and JSON-backed order stages, migrating existing six-stage data forward.
+The first setup requires the production, multi-company, tenant-hardening, `20261027000200_remove_company_slugs.sql`, `20261027000300_dynamic_company_sections.sql`, and `20261027000400_company_subscriptions.sql` migrations. Review each migration, back up production data, and apply it through your normal Supabase change process; this repository does not run migrations automatically. The tenant-hardening migration makes Auth signup metadata create only pending workers and grants tenant context only to approved users in active companies. The slug migration removes the unused company slug column while preserving company records and related data. The dynamic sections migration creates a company-specific section catalog and JSON-backed order stages, migrating existing six-stage data forward.
 
 Owners can reconfigure their factory pipeline in **Workers & Rates → Sections**. They can rename and reorder sections, add more, or deactivate ones they no longer use. Deactivated sections remain in historical records. The Create Account and approval forms offer that company's active sections, and production, submissions, and piece rates follow the same company-specific setup.
 
 The shared login page asks for email and password only. After authentication, the Edge Function reads the user's trusted profile, loads that company's workspace, and returns its company name for the application header and dashboards. Users do not choose a company at login; company membership remains controlled by the database profile and RLS.
+
+### SaaS Subscription Billing
+
+TextilePay is priced at **₹499 INR per company per month** through Razorpay Subscriptions. The billing migration gives companies a 14-day trial. Owners can manage billing from **Billing & Plan**; managers and workers share the company plan. After trial expiry, all operational API routes deny access until Razorpay confirms an active subscription. A cancelled or past-due subscription retains access only through its paid period end. Webhook updates are signature-checked and deduplicated before they change a company's access state.
+
+Before enabling checkout, create a Razorpay **monthly INR ₹499** plan in the Razorpay Dashboard and set these as Supabase Edge Function secrets: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_PLAN_ID`, and `RAZORPAY_WEBHOOK_SECRET`. Do not add the key secret or webhook secret to Vercel frontend variables or commit them. Configure the Razorpay webhook to call:
+
+```text
+https://<project-ref>.supabase.co/functions/v1/make-server-32660b5b/make-server-32660b5b/billing/webhook
+```
+
+Subscribe to `subscription.activated`, `subscription.charged`, `subscription.pending`, `subscription.halted`, `subscription.cancelled`, `subscription.resumed`, and `subscription.completed`. Apply `20261027000400_company_subscriptions.sql`, then deploy the updated `make-server-32660b5b` function. Use Razorpay Test Mode keys and a test plan first; switch to live keys and a live plan only after testing checkout and webhook renewal events.
 
 Run the PostgreSQL isolation checks against a disposable local Supabase database with Docker available:
 

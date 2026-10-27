@@ -4,7 +4,7 @@ export type Role = "owner" | "manager" | "worker";
 export type Status = "pending" | "approved" | "rejected" | "deactivated";
 export type PayType = "piece" | "daily";
 export type Section = string;
-export type View = "dashboard" | "workers" | "accounts" | "attendance" | "production" | "mywork" | "payout" | "reports";
+export type View = "dashboard" | "workers" | "accounts" | "attendance" | "production" | "mywork" | "payout" | "reports" | "billing";
 
 export interface User {
   id: string;
@@ -177,6 +177,7 @@ export const NAV_ITEMS_DEFINITIONS: Record<Role, { id: View; label: string }[]> 
     { id: "production", label: "Production" },
     { id: "payout", label: "Payout" },
     { id: "reports", label: "Reports" },
+    { id: "billing", label: "Billing" },
   ],
   manager: [
     { id: "accounts", label: "Add Worker" },

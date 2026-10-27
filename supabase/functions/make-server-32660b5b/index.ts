@@ -21,7 +21,17 @@ const admin = () =>
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
 
-async function authenticate(c: any) {
+function hasBillingAccess(company: any) {
+  const now = Date.now();
+  if (["trial", "pending"].includes(company.subscription_state)) {
+    return Date.parse(company.trial_ends_at) > now;
+  }
+  return ["active", "past_due", "cancelled", "halted"].includes(company.subscription_state)
+    && company.subscription_period_end
+    && Date.parse(company.subscription_period_end) > now;
+}
+
+async function authenticate(c: any, allowBillingBlocked = false) {
   const authorization = c.req.header("Authorization");
   const token = authorization?.replace(/^Bearer\s+/i, "");
   if (!token) throw new Error("UNAUTHORIZED");
@@ -39,11 +49,12 @@ async function authenticate(c: any) {
   if (profile.status !== "approved") throw new Error("ACCOUNT_NOT_APPROVED");
   const { data: company, error: companyError } = await client
     .from("companies")
-    .select("id, name, status")
+    .select("id, name, status, subscription_state, trial_ends_at, subscription_period_end, subscription_cancel_at_period_end, razorpay_subscription_id")
     .eq("id", profile.company_id)
     .single();
   if (companyError || !company) throw new Error("COMPANY_NOT_FOUND");
   if (!["active", "trial"].includes(company.status)) throw new Error("COMPANY_INACTIVE");
+  if (!allowBillingBlocked && !hasBillingAccess(company)) throw new Error("SUBSCRIPTION_REQUIRED");
   return { client, user, profile, company };
 }
 
@@ -53,6 +64,7 @@ function fail(c: any, error: unknown) {
   if (message === "PROFILE_NOT_FOUND") return c.json({ error: "User profile is not configured" }, 403);
   if (message === "COMPANY_NOT_FOUND") return c.json({ error: "Company is not configured" }, 403);
   if (message === "COMPANY_INACTIVE") return c.json({ error: "Company subscription is not active" }, 403);
+  if (message === "SUBSCRIPTION_REQUIRED") return c.json({ error: "Your TextilePay plan has expired. Renew to continue." }, 402);
   if (message === "ACCOUNT_NOT_APPROVED") return c.json({ error: "Your account is awaiting company approval or is no longer active." }, 403);
   if (message.startsWith("Cross-company")) return c.json({ error: message }, 403);
   console.error("TextilePay API error", error);
@@ -61,6 +73,52 @@ function fail(c: any, error: unknown) {
 
 function assertNoError(error: { message: string } | null) {
   if (error) throw new Error(error.message);
+}
+
+function toHex(bytes: Uint8Array) {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacHex(secret: string, message: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return toHex(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message))));
+}
+
+function secureEqual(left: string, right: string) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index++) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  return difference === 0;
+}
+
+function razorpayHeaders(keyId: string, keySecret: string) {
+  return {
+    Authorization: `Basic ${btoa(`${keyId}:${keySecret}`)}`,
+    "Content-Type": "application/json",
+  };
+}
+
+async function razorpayRequest(path: string, method: string, body?: unknown) {
+  const keyId = Deno.env.get("RAZORPAY_KEY_ID");
+  const keySecret = Deno.env.get("RAZORPAY_KEY_SECRET");
+  if (!keyId || !keySecret) throw new Error("Billing is not configured. Ask the platform administrator to finish Razorpay setup.");
+  const response = await fetch(`https://api.razorpay.com/v1${path}`, {
+    method,
+    headers: razorpayHeaders(keyId, keySecret),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error("Razorpay API request failed", response.status, result?.error?.code);
+    throw new Error("Razorpay could not process the subscription request. Try again later.");
+  }
+  return result;
 }
 
 function toUser(profile: any, privateProfile?: any) {
@@ -512,6 +570,191 @@ async function saveWorkerDatabase(client: ReturnType<typeof admin>, worker: any,
 }
 
 app.get("/make-server-32660b5b/health", (c) => c.json({ status: "ok" }));
+
+app.get("/make-server-32660b5b/billing/status", async (c) => {
+  try {
+    const { profile, company } = await authenticate(c, true);
+    return c.json({
+      companyName: company.name,
+      state: company.subscription_state,
+      trialEndsAt: company.trial_ends_at,
+      periodEndsAt: company.subscription_period_end,
+      cancelAtPeriodEnd: company.subscription_cancel_at_period_end,
+      hasAccess: hasBillingAccess(company),
+      canManage: profile.role === "owner",
+      user: { id: profile.id, name: profile.name, email: profile.email, role: profile.role },
+      amount: 499,
+      currency: "INR",
+      interval: "monthly",
+    });
+  } catch (error) {
+    return fail(c, error);
+  }
+});
+
+app.post("/make-server-32660b5b/billing/checkout", async (c) => {
+  try {
+    const { client, profile, company } = await authenticate(c, true);
+    if (profile.role !== "owner") return c.json({ error: "Only the company owner can manage billing." }, 403);
+    if (hasBillingAccess(company) && company.subscription_state !== "trial") {
+      return c.json({ error: "Your company already has an active subscription." }, 409);
+    }
+
+    const keyId = Deno.env.get("RAZORPAY_KEY_ID");
+    const keySecret = Deno.env.get("RAZORPAY_KEY_SECRET");
+    const planId = Deno.env.get("RAZORPAY_PLAN_ID");
+    if (!keyId || !keySecret || !planId) {
+      return c.json({ error: "Billing setup is incomplete. Contact the TextilePay administrator." }, 503);
+    }
+
+    const plan = await razorpayRequest(`/plans/${encodeURIComponent(planId)}`, "GET");
+    if (plan.item?.amount !== 49900 || plan.item?.currency !== "INR" || plan.period !== "monthly" || plan.interval !== 1) {
+      return c.json({ error: "The configured Razorpay plan must be ₹499 INR per month." }, 503);
+    }
+
+    let subscription: any;
+    if (company.subscription_state === "pending" && company.razorpay_subscription_id) {
+      subscription = await razorpayRequest(`/subscriptions/${encodeURIComponent(company.razorpay_subscription_id)}`, "GET");
+      if (!["created", "authenticated"].includes(subscription.status)) subscription = null;
+    }
+    if (!subscription) {
+      subscription = await razorpayRequest("/subscriptions", "POST", {
+        plan_id: planId,
+        total_count: 120,
+        quantity: 1,
+        customer_notify: false,
+        notes: { company_id: company.id, owner_id: profile.id },
+      });
+      const { error } = await client.from("companies").update({
+        subscription_state: "pending",
+        razorpay_subscription_id: subscription.id,
+      }).eq("id", company.id);
+      assertNoError(error);
+    }
+
+    return c.json({
+      keyId,
+      subscriptionId: subscription.id,
+      companyName: company.name,
+      email: profile.email,
+      ownerName: profile.name,
+    });
+  } catch (error) {
+    return fail(c, error);
+  }
+});
+
+app.post("/make-server-32660b5b/billing/verify", async (c) => {
+  try {
+    const { client, profile, company } = await authenticate(c, true);
+    if (profile.role !== "owner") return c.json({ error: "Only the company owner can manage billing." }, 403);
+    const { paymentId, subscriptionId, signature } = await c.req.json();
+    const secret = Deno.env.get("RAZORPAY_KEY_SECRET");
+    if (!secret || typeof paymentId !== "string" || typeof subscriptionId !== "string" || typeof signature !== "string") {
+      return c.json({ error: "Invalid payment verification details." }, 400);
+    }
+    if (!company.razorpay_subscription_id || subscriptionId !== company.razorpay_subscription_id) {
+      return c.json({ error: "The payment does not match this company subscription." }, 400);
+    }
+    const expected = await hmacHex(secret, `${paymentId}|${company.razorpay_subscription_id}`);
+    if (!secureEqual(expected, signature)) return c.json({ error: "Razorpay payment signature could not be verified." }, 400);
+
+    // The client callback proves the authorization response; entitlement still
+    // follows Razorpay's server-side subscription status and signed webhooks.
+    const subscription = await razorpayRequest(`/subscriptions/${encodeURIComponent(company.razorpay_subscription_id)}`, "GET");
+    if (subscription.status === "active") {
+      const periodEnd = Number(subscription.current_end) ? new Date(Number(subscription.current_end) * 1000).toISOString() : null;
+      assertNoError((await client.from("companies").update({
+        subscription_state: "active",
+        subscription_period_end: periodEnd,
+      }).eq("id", company.id)).error);
+    }
+    const { data: freshCompany, error } = await client.from("companies")
+      .select("id, name, status, subscription_state, trial_ends_at, subscription_period_end, subscription_cancel_at_period_end, razorpay_subscription_id")
+      .eq("id", company.id)
+      .single();
+    assertNoError(error);
+    return c.json({ hasAccess: hasBillingAccess(freshCompany), state: freshCompany.subscription_state });
+  } catch (error) {
+    return fail(c, error);
+  }
+});
+
+app.post("/make-server-32660b5b/billing/cancel", async (c) => {
+  try {
+    const { client, profile, company } = await authenticate(c, true);
+    if (profile.role !== "owner") return c.json({ error: "Only the company owner can manage billing." }, 403);
+    if (!company.razorpay_subscription_id || !["active", "past_due"].includes(company.subscription_state)) {
+      return c.json({ error: "There is no active subscription to cancel." }, 409);
+    }
+    await razorpayRequest(`/subscriptions/${encodeURIComponent(company.razorpay_subscription_id)}/cancel`, "POST", { cancel_at_cycle_end: true });
+    assertNoError((await client.from("companies").update({ subscription_cancel_at_period_end: true }).eq("id", company.id)).error);
+    return c.json({ cancelled: true, periodEndsAt: company.subscription_period_end });
+  } catch (error) {
+    return fail(c, error);
+  }
+});
+
+app.post("/make-server-32660b5b/billing/webhook", async (c) => {
+  try {
+    const webhookSecret = Deno.env.get("RAZORPAY_WEBHOOK_SECRET");
+    if (!webhookSecret) return c.json({ error: "Webhook is not configured." }, 503);
+    const rawBody = await c.req.text();
+    const signature = c.req.header("X-Razorpay-Signature") ?? "";
+    const eventId = c.req.header("x-razorpay-event-id") ?? "";
+    if (!eventId || !secureEqual(await hmacHex(webhookSecret, rawBody), signature)) {
+      return c.json({ error: "Invalid webhook signature." }, 400);
+    }
+    const event = JSON.parse(rawBody);
+    const entity = event.payload?.subscription?.entity;
+    const service = admin();
+    let company: any = null;
+    if (typeof entity?.id === "string") {
+      const { data, error } = await service.from("companies").select("id")
+        .eq("razorpay_subscription_id", entity.id).maybeSingle();
+      assertNoError(error);
+      company = data;
+    }
+    if (company && entity) {
+      // Read the current Razorpay state so delayed or out-of-order webhooks
+      // cannot reactivate a subscription that has since been cancelled.
+      const current = await razorpayRequest(`/subscriptions/${encodeURIComponent(entity.id)}`, "GET");
+      const stateByRazorpayStatus: Record<string, string> = {
+        created: "pending",
+        authenticated: "pending",
+        active: "active",
+        pending: "past_due",
+        halted: "halted",
+        cancelled: "cancelled",
+        completed: "expired",
+        expired: "expired",
+      };
+      const nextState = stateByRazorpayStatus[current.status];
+      if (nextState) {
+        const update: Record<string, unknown> = { subscription_state: nextState };
+        if (nextState === "cancelled") update.subscription_cancel_at_period_end = true;
+        else if (nextState === "active" && current.status === "active" && current.has_scheduled_changes !== true) {
+          update.subscription_cancel_at_period_end = false;
+        }
+        if (Number(current.current_end) > 0) update.subscription_period_end = new Date(Number(current.current_end) * 1000).toISOString();
+        const { error } = await service.from("companies").update(update).eq("id", company.id);
+        assertNoError(error);
+      }
+    }
+
+    const { error: eventError } = await service.from("billing_events").insert({
+      event_id: eventId,
+      company_id: company?.id ?? null,
+      event_type: String(event.event ?? "unknown"),
+    });
+    if (eventError?.code === "23505") return c.json({ received: true, duplicate: true });
+    assertNoError(eventError);
+    return c.json({ received: true });
+  } catch (error) {
+    console.error("Razorpay webhook error", error);
+    return c.json({ error: "Unable to process webhook." }, 500);
+  }
+});
 
 app.post("/make-server-32660b5b/users", async (c) => {
   try {

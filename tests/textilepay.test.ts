@@ -809,7 +809,7 @@ describe("Role-Based View Routing & Security Policies", () => {
   it("defines correct navigation menus per role", () => {
     const ownerViews = NAV_ITEMS.owner.map(i => i.id);
     assert.deepEqual(ownerViews, [
-      "dashboard", "workers", "attendance", "production", "payout", "reports",
+      "dashboard", "workers", "attendance", "production", "payout", "reports", "billing",
     ]);
 
     const managerViews = NAV_ITEMS.manager.map(i => i.id);

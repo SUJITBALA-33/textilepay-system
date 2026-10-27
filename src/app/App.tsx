@@ -20,6 +20,7 @@ import { ProductionView } from "./views/ProductionView";
 import { WorkerDashView } from "./views/WorkerDashView";
 import { PayoutView } from "./views/PayoutView";
 import { ReportsView } from "./views/ReportsView";
+import { BillingView, type BillingInfo, type CheckoutDetails } from "./views/BillingView";
 
 // Re-export domain models & utilities for backward compatibility & tests
 export * from "../lib/payroll";
@@ -37,6 +38,33 @@ async function fetchDBRemote(): Promise<DB | null> {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || "Unable to load your workspace.");
   return json.data ?? null;
+}
+
+async function fetchBillingRemote(): Promise<BillingInfo> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("Please sign in again to view company billing.");
+  const res = await fetch(`${edgeFunctionBase}/billing/status`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || "Unable to load billing status.");
+  return json as BillingInfo;
+}
+
+async function postBillingRemote(path: string, body?: unknown) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("Your session has expired. Please sign in again.");
+  const res = await fetch(`${edgeFunctionBase}/billing/${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || "Unable to process billing request.");
+  return json;
 }
 
 async function saveDBRemote(db: DB): Promise<void> {
@@ -81,6 +109,7 @@ export default function App() {
   const [db, setDb] = useState<DB | null>(createDefaultDB());
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [billingInfo, setBillingInfo] = useState<BillingInfo | null>(null);
   const [view, setView] = useState<View>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { toasts, toast } = useToast();
@@ -118,9 +147,14 @@ export default function App() {
         const {
           data: { session },
         } = await supabase.auth.getSession();
-        if (session) await loadWorkspace(session.user.id);
+        if (session) {
+          const billing = await fetchBillingRemote();
+          setBillingInfo(billing);
+          if (billing.hasAccess) await loadWorkspace(session.user.id);
+        }
       } catch (error) {
         await supabase.auth.signOut();
+        setBillingInfo(null);
         toast.error(
           error instanceof Error
             ? error.message
@@ -167,6 +201,9 @@ export default function App() {
       throw new Error(error.message);
     }
     try {
+      const billing = await fetchBillingRemote();
+      setBillingInfo(billing);
+      if (!billing.hasAccess) return;
       const profile = await loadWorkspace(data.user.id);
       window.history.replaceState(null, "", "/");
       toast.success(`Welcome, ${profile.name}!`);
@@ -176,6 +213,34 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function startSubscriptionCheckout(): Promise<CheckoutDetails> {
+    return await postBillingRemote("checkout") as CheckoutDetails;
+  }
+
+  async function refreshBillingStatus() {
+    const billing = await fetchBillingRemote();
+    setBillingInfo(billing);
+    if (billing.hasAccess && !currentUser) await loadWorkspace(billing.user.id);
+  }
+
+  async function verifySubscription(response: {
+    razorpay_payment_id: string;
+    razorpay_subscription_id: string;
+    razorpay_signature: string;
+  }) {
+    await postBillingRemote("verify", {
+      paymentId: response.razorpay_payment_id,
+      subscriptionId: response.razorpay_subscription_id,
+      signature: response.razorpay_signature,
+    });
+    await refreshBillingStatus();
+  }
+
+  async function cancelSubscription() {
+    await postBillingRemote("cancel");
+    await refreshBillingStatus();
   }
 
   async function handleCreateAccount(form: Record<string, string>) {
@@ -207,6 +272,7 @@ export default function App() {
     }
     await supabase.auth.signOut();
     setCurrentUser(null);
+    setBillingInfo(null);
     setDb(createDefaultDB());
     setSidebarOpen(false);
     window.history.replaceState(null, "", "/");
@@ -257,6 +323,22 @@ export default function App() {
           </main>
         </div>
       </div>
+    );
+  }
+
+  if (billingInfo && !billingInfo.hasAccess) {
+    return (
+      <>
+        <BillingView
+          billing={billingInfo}
+          onCheckout={startSubscriptionCheckout}
+          onVerify={verifySubscription}
+          onRefresh={refreshBillingStatus}
+          onCancel={cancelSubscription}
+          toast={(message) => toast.error(message)}
+        />
+        <ToastContainer toasts={toasts} />
+      </>
     );
   }
 
@@ -323,6 +405,16 @@ export default function App() {
           )}
           {safeView === "reports" && currentUser.role === "owner" && (
             <ReportsView {...viewProps} />
+          )}
+          {safeView === "billing" && currentUser.role === "owner" && billingInfo && (
+            <BillingView
+              billing={billingInfo}
+              onCheckout={startSubscriptionCheckout}
+              onVerify={verifySubscription}
+              onRefresh={refreshBillingStatus}
+              onCancel={cancelSubscription}
+              toast={(message) => toast.error(message)}
+            />
           )}
         </div>
       </main>
