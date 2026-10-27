@@ -52,7 +52,11 @@ async function authenticate(c: any, allowBillingBlocked = false) {
     .select("id, name, status, subscription_state, trial_ends_at, subscription_period_end, subscription_cancel_at_period_end, razorpay_subscription_id")
     .eq("id", profile.company_id)
     .single();
-  if (companyError || !company) throw new Error("COMPANY_NOT_FOUND");
+  if (companyError) {
+    console.error("Unable to load company billing fields. Check that the subscription migrations have been applied.", companyError);
+    throw new Error("BILLING_CONFIGURATION_REQUIRED");
+  }
+  if (!company) throw new Error("COMPANY_NOT_FOUND");
   if (!["active", "trial"].includes(company.status)) throw new Error("COMPANY_INACTIVE");
   if (!allowBillingBlocked && !hasBillingAccess(company)) throw new Error("SUBSCRIPTION_REQUIRED");
   return { client, user, profile, company };
@@ -63,6 +67,7 @@ function fail(c: any, error: unknown) {
   if (message === "UNAUTHORIZED") return c.json({ error: "Authentication required" }, 401);
   if (message === "PROFILE_NOT_FOUND") return c.json({ error: "User profile is not configured" }, 403);
   if (message === "COMPANY_NOT_FOUND") return c.json({ error: "Company is not configured" }, 403);
+  if (message === "BILLING_CONFIGURATION_REQUIRED") return c.json({ error: "Company billing is not configured. Apply the latest Supabase migrations and redeploy this Edge Function.", code: message }, 503);
   if (message === "COMPANY_INACTIVE") return c.json({ error: "Company subscription is not active" }, 403);
   if (message === "SUBSCRIPTION_REQUIRED") return c.json({ error: "Your TextilePay plan has expired. Renew to continue." }, 402);
   if (message === "ACCOUNT_NOT_APPROVED") return c.json({ error: "Your account is awaiting company approval or is no longer active." }, 403);

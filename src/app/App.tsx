@@ -47,7 +47,15 @@ async function fetchBillingRemote(): Promise<BillingInfo> {
     headers: { Authorization: `Bearer ${session.access_token}` },
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error || "Unable to load billing status.");
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error("Billing service is not deployed yet. Apply the latest Supabase migrations and redeploy the make-server-32660b5b function.");
+    }
+    if (json.code === "BILLING_CONFIGURATION_REQUIRED") {
+      throw new Error(json.error);
+    }
+    throw new Error(json.error || "Unable to load billing status. Check the Supabase billing migration and Edge Function deployment.");
+  }
   return json as BillingInfo;
 }
 
@@ -385,6 +393,15 @@ export default function App() {
       />
 
       <main id="main-content" tabIndex={-1} className="app-main min-h-[100dvh] pt-[66px] lg:ml-64">
+        {billingInfo && ["trial", "pending"].includes(billingInfo.state) && Date.parse(billingInfo.trialEndsAt) > Date.now() && (
+          <div role="status" className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:mx-6 lg:mx-8">
+            <span>
+              Company free trial: <strong>{Math.max(1, Math.ceil((Date.parse(billingInfo.trialEndsAt) - Date.now()) / 86_400_000))} days remaining</strong>
+              {billingInfo.canManage ? ". Subscribe any time from Billing & Plan." : ". Your company owner manages the plan."}
+            </span>
+            {billingInfo.canManage && <button type="button" onClick={() => navigate("billing")} className="min-h-10 rounded-lg px-3 font-semibold text-amber-950 underline underline-offset-2">Manage plan</button>}
+          </div>
+        )}
         <div className="page-content mx-auto w-full max-w-[1440px] px-4 py-5 pb-24 sm:px-6 sm:py-7 lg:px-8 lg:py-8">
           {safeView === "dashboard" && currentUser.role === "owner" && (
             <DashboardView {...viewProps} />

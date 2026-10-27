@@ -1,10 +1,10 @@
 -- Company-level monthly SaaS subscription tracking for TextilePay.
--- Existing tenants receive a 14-day onboarding trial after this migration.
+-- Existing tenants receive a 30-day onboarding trial after this migration.
 
 alter table public.companies
   add column subscription_state text not null default 'trial'
     check (subscription_state in ('trial', 'pending', 'active', 'past_due', 'halted', 'cancelled', 'expired')),
-  add column trial_ends_at timestamptz not null default (now() + interval '14 days'),
+  add column trial_ends_at timestamptz not null default (now() + interval '30 days'),
   add column subscription_period_end timestamptz,
   add column subscription_cancel_at_period_end boolean not null default false,
   add column razorpay_subscription_id text unique;

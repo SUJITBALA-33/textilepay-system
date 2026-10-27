@@ -61,6 +61,7 @@ function formatDate(value: string | null) {
 export function BillingView({ billing, onCheckout, onVerify, onRefresh, onCancel, toast }: Props) {
   const [busy, setBusy] = useState(false);
   const trial = billing.state === "trial" || (billing.state === "pending" && Date.parse(billing.trialEndsAt) > Date.now());
+  const trialDaysLeft = trial ? Math.max(0, Math.ceil((Date.parse(billing.trialEndsAt) - Date.now()) / 86_400_000)) : 0;
   const stateLabel: Record<string, string> = {
     trial: "Free trial",
     pending: "Payment setup pending",
@@ -133,6 +134,7 @@ export function BillingView({ billing, onCheckout, onVerify, onRefresh, onCancel
             <div className="rounded-2xl border border-border bg-card p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">{trial ? "Trial ends" : "Next renewal / access ends"}</p>
               <p className="mt-2 text-lg font-semibold text-foreground">{formatDate(trial ? billing.trialEndsAt : billing.periodEndsAt)}</p>
+              {trial && <p className="mt-1 text-xs font-medium text-primary">{trialDaysLeft} days remaining</p>}
             </div>
             <div className="rounded-2xl border border-border bg-card p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Billing cycle</p>
