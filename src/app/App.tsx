@@ -5,6 +5,7 @@ import {
   type User,
   type View,
   createDefaultDB,
+  DEFAULT_COMPANY_SECTIONS,
   viewFromHash,
 } from "../lib/payroll";
 import { useToast, ToastContainer } from "./components/ui-primitives";
@@ -86,8 +87,16 @@ export default function App() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadWorkspace = useCallback(async (authUserId: string) => {
-    const loaded = await fetchDBRemote();
-    if (!loaded) throw new Error("No TextilePay workspace was returned.");
+    const response = await fetchDBRemote();
+    if (!response) throw new Error("No TextilePay workspace was returned.");
+    // Keep the latest frontend compatible with an older deployed Edge Function
+    // while its dynamic sections migration and function update are rolling out.
+    const loaded: DB = {
+      ...response,
+      sections: Array.isArray(response.sections) && response.sections.length
+        ? response.sections
+        : DEFAULT_COMPANY_SECTIONS.map((section) => ({ ...section })),
+    };
     const profile = loaded.users.find((user) => user.id === authUserId);
     if (!profile)
       throw new Error("Your profile is not configured. Contact the owner.");
