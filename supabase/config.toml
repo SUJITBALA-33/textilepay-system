@@ -1,0 +1,4 @@
+project_id = "textilepay"
+
+[functions.make-server-32660b5b]
+verify_jwt = false
