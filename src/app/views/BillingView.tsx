@@ -58,10 +58,19 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(date);
 }
 
+function daysRemaining(value: string) {
+  const end = new Date(value);
+  if (Number.isNaN(end.getTime())) return 0;
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.max(0, Math.round((endUtc - todayUtc) / 86_400_000) + 1);
+}
+
 export function BillingView({ billing, onCheckout, onVerify, onRefresh, onCancel, toast }: Props) {
   const [busy, setBusy] = useState(false);
   const trial = billing.state === "trial" || (billing.state === "pending" && Date.parse(billing.trialEndsAt) > Date.now());
-  const trialDaysLeft = trial ? Math.max(0, Math.ceil((Date.parse(billing.trialEndsAt) - Date.now()) / 86_400_000)) : 0;
+  const trialDaysLeft = trial ? daysRemaining(billing.trialEndsAt) : 0;
   const stateLabel: Record<string, string> = {
     trial: "Free trial",
     pending: "Payment setup pending",
@@ -83,7 +92,7 @@ export function BillingView({ billing, onCheckout, onVerify, onRefresh, onCancel
         key: checkout.keyId,
         subscription_id: checkout.subscriptionId,
         name: "TextilePay",
-        description: "TextilePay monthly company subscription — ₹499",
+        description: "TextilePay monthly company subscription — ₹99",
         prefill: { name: checkout.ownerName, email: checkout.email },
         notes: { company: checkout.companyName },
         theme: { color: "#147d70" },
@@ -124,7 +133,7 @@ export function BillingView({ billing, onCheckout, onVerify, onRefresh, onCancel
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border p-6 sm:p-8">
             <div>
               <Badge variant={billing.hasAccess ? "success" : "warning"}>{stateLabel[billing.state] ?? billing.state}</Badge>
-              <h2 className="mt-5 text-4xl font-semibold tracking-tight text-foreground">₹499<span className="ml-2 text-base font-normal text-muted-foreground">/ month</span></h2>
+              <h2 className="mt-5 text-4xl font-semibold tracking-tight text-foreground">₹99<span className="ml-2 text-base font-normal text-muted-foreground">/ month</span></h2>
               <p className="mt-2 text-sm text-muted-foreground">One subscription covers the full company workspace and its team.</p>
             </div>
             <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary"><CreditCard size={22} /></span>
@@ -161,7 +170,7 @@ export function BillingView({ billing, onCheckout, onVerify, onRefresh, onCancel
                 </Btn>
                 {(!billing.hasAccess || trial) && <Btn type="button" disabled={busy} onClick={beginCheckout}>
                   {busy ? <LoaderCircle size={15} className="animate-spin" /> : <ArrowRight size={15} />}
-                  {trial ? "Subscribe for ₹499/month" : "Renew subscription"}
+                  {trial ? "Subscribe for ₹99/month" : "Renew subscription"}
                 </Btn>}
                 {billing.hasAccess && !trial && !billing.cancelAtPeriodEnd && <Btn type="button" variant="secondary" disabled={busy} onClick={async () => {
                   if (!window.confirm("Cancel renewal at the end of the current paid month? Your company keeps access until then.")) return;

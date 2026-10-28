@@ -588,7 +588,7 @@ app.get("/make-server-32660b5b/billing/status", async (c) => {
       hasAccess: hasBillingAccess(company),
       canManage: profile.role === "owner",
       user: { id: profile.id, name: profile.name, email: profile.email, role: profile.role },
-      amount: 499,
+      amount: 99,
       currency: "INR",
       interval: "monthly",
     });
@@ -613,8 +613,8 @@ app.post("/make-server-32660b5b/billing/checkout", async (c) => {
     }
 
     const plan = await razorpayRequest(`/plans/${encodeURIComponent(planId)}`, "GET");
-    if (plan.item?.amount !== 49900 || plan.item?.currency !== "INR" || plan.period !== "monthly" || plan.interval !== 1) {
-      return c.json({ error: "The configured Razorpay plan must be ₹499 INR per month." }, 503);
+    if (plan.item?.amount !== 9900 || plan.item?.currency !== "INR" || plan.period !== "monthly" || plan.interval !== 1) {
+      return c.json({ error: "The configured Razorpay plan must be ₹99 INR per month." }, 503);
     }
 
     let subscription: any;

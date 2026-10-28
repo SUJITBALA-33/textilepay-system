@@ -27,6 +27,15 @@ export * from "../lib/payroll";
 export { NAV_ITEMS };
 export type { ViewProps };
 
+function trialDaysRemaining(value: string) {
+  const end = new Date(value);
+  if (Number.isNaN(end.getTime())) return 0;
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.max(0, Math.round((endUtc - todayUtc) / 86_400_000) + 1);
+}
+
 async function fetchDBRemote(): Promise<DB | null> {
   const {
     data: { session },
@@ -399,7 +408,7 @@ export default function App() {
         {billingInfo && ["trial", "pending"].includes(billingInfo.state) && Date.parse(billingInfo.trialEndsAt) > Date.now() && (
           <div role="status" className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:mx-6 lg:mx-8">
             <span>
-              Company free trial: <strong>{Math.max(1, Math.ceil((Date.parse(billingInfo.trialEndsAt) - Date.now()) / 86_400_000))} days remaining</strong>
+              Company free trial: <strong>{trialDaysRemaining(billingInfo.trialEndsAt)} days remaining</strong>
               {billingInfo.canManage ? ". Subscribe any time from Billing & Plan." : ". Your company owner manages the plan."}
             </span>
             {billingInfo.canManage && <button type="button" onClick={() => navigate("billing")} className="min-h-10 rounded-lg px-3 font-semibold text-amber-950 underline underline-offset-2">Manage plan</button>}

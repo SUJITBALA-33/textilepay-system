@@ -514,9 +514,9 @@ The shared login page asks for email and password only. After authentication, th
 
 ### SaaS Subscription Billing
 
-TextilePay is priced at **₹499 INR per company per month** through Razorpay Subscriptions. Companies receive a 30-day trial, with days remaining shown after sign-in. Owners can manage billing from **Billing & Plan**; managers and workers share the company plan. After trial expiry, all operational API routes deny access until Razorpay confirms an active subscription. A cancelled or past-due subscription retains access only through its paid period end. Webhook updates are signature-checked and deduplicated before they change a company's access state.
+TextilePay is priced at **₹99 INR per company per month** through Razorpay Subscriptions. Companies receive a 30-day trial, with days remaining shown after sign-in. Owners can manage billing from **Billing & Plan**; managers and workers share the company plan. After trial expiry, all operational API routes deny access until Razorpay confirms an active subscription. A cancelled or past-due subscription retains access only through its paid period end. Webhook updates are signature-checked and deduplicated before they change a company's access state.
 
-Before enabling checkout, create a Razorpay **monthly INR ₹499** plan in the Razorpay Dashboard and set these as Supabase Edge Function secrets: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_PLAN_ID`, and `RAZORPAY_WEBHOOK_SECRET`. Do not add the key secret or webhook secret to Vercel frontend variables or commit them. Configure the Razorpay webhook to call:
+Before enabling checkout, create a Razorpay **monthly INR ₹99** plan in the Razorpay Dashboard and set these as Supabase Edge Function secrets: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_PLAN_ID`, and `RAZORPAY_WEBHOOK_SECRET`. Do not add the key secret or webhook secret to Vercel frontend variables or commit them. Configure the Razorpay webhook to call:
 
 ```text
 https://<project-ref>.supabase.co/functions/v1/make-server-32660b5b/make-server-32660b5b/billing/webhook
